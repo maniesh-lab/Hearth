@@ -33,6 +33,7 @@ async def main():
         await bot.load_extension("cogs.roles")
         await bot.load_extension("cogs.moderation")
         await bot.load_extension("cogs.utility")
+        await bot.load_extension("cogs.faq")
         await bot.start(discord_key)
 
 asyncio.run(main())

@@ -1,2 +1,5 @@
 discord.py
 python-dotenv
+sentence-transformers
+groq
+numpy
