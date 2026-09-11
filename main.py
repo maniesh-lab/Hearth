@@ -13,12 +13,9 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-GUILD_ID = discord.Object(id=1547528134696636436)  # your test server
-
 @bot.event
 async def on_ready():
-    bot.tree.copy_global_to(guild=GUILD_ID)
-    await bot.tree.sync(guild=GUILD_ID)
+    await bot.tree.sync()
     print(f"{bot.user.name} is online")
 
 
