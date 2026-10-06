@@ -60,25 +60,29 @@ class FAQ(commands.Cog):
     @app_commands.command(name="ask", description="Ask a question from this server's FAQ")
     async def ask(self, interaction: discord.Interaction, question: str):
         await interaction.response.defer()
-        chunks, embeddings = load_knowledge_base(interaction.guild.id)
+        try:
+            chunks, embeddings = load_knowledge_base(interaction.guild.id)
 
-        if chunks is None:
-            await interaction.followup.send("No FAQ set up yet — an admin needs to run `/faqload` first.")
-            return
+            if chunks is None:
+                await interaction.followup.send("No FAQ set up yet — an admin needs to run `/faqload` first.")
+                return
 
-        query_vec = model.encode([question])[0]
-        scores = cosine_similarity(query_vec, embeddings)
-        top_indices = np.argsort(scores)[-3:][::-1]
-        context = "\n\n".join(chunks[i] for i in top_indices)
+            query_vec = model.encode([question])[0]
+            scores = cosine_similarity(query_vec, embeddings)
+            top_indices = np.argsort(scores)[-3:][::-1]
+            context = "\n\n".join(chunks[i] for i in top_indices)
 
-        response = groq_client.chat.completions.create(
-            model="openai/gpt-oss-20b",
-            messages=[
-                {"role": "system", "content": "Answer only using the provided context. If the context doesn't contain the answer, say you don't have that information."},
-                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-            ]
-        )
-        await interaction.followup.send(response.choices[0].message.content)
+            response = groq_client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=[
+                    {"role": "system", "content": "Answer only using the provided context. If the context doesn't contain the answer, say you don't have that information."},
+                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
+                ]
+            )
+            await interaction.followup.send(response.choices[0].message.content)
+        except Exception as e:
+            print(f"[faq] /ask failed: {e}")
+            await interaction.followup.send("Something went wrong answering that — try again in a moment.")
 
     async def cog_app_command_error(self, interaction, error):
         if isinstance(error, app_commands.MissingPermissions):
