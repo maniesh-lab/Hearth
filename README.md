@@ -12,14 +12,15 @@ so any single feature can be reused or dropped into another bot.
 ---
 ## Features
 - Welcome DM and server-join announcement when a new member joins
-- Self-serve role assignment — reaction roles *and* a `/role` slash command, both toggle the same roles
-- Moderation basics — kick, ban, timeout-based mute, warnings, and an automated spam filter
+- Self-serve role assignment — each server picks its own roles with `/roleadd`, then members use a reaction-role picker *or* the `/role` slash command; both toggle the same roles
+- Moderation basics — kick, ban, timeout-based mute, warnings, and an automated spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
 - Utility commands — server info, quick polls, timed reminders
 - **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers are retrieved from that server's own content, not hardcoded or hallucinated
-- Per-server isolation — every server gets its own FAQ knowledge base and its own role-picker message, so the same bot can serve multiple clients' servers with completely separate content
+- Per-server isolation — every server gets its own FAQ knowledge base, role list, role-picker message, warnings and spam counts, so the same bot can serve multiple clients' servers with completely separate content
 - Local embeddings (`sentence-transformers`) — no API cost for the retrieval step
 - Free-tier LLM inference via Groq — no paid API spend required to run or demo
-- Restart-safe — role-picker messages and FAQ knowledge bases persist across restarts and redeploys
+- Restart-safe — role lists, role-picker messages and FAQ knowledge bases persist across restarts and redeploys
+- Non-blocking AI calls — embeddings run in a background thread and the Groq call is async, so one `/ask` never freezes the bot for other servers
 - Containerized with Docker for consistent, portable deployment
 ---
 ## Project Structure
@@ -28,14 +29,14 @@ hearth/
 │
 ├── cogs/
 │   ├── onboarding.py         # welcome DM + server-join announcement
-│   ├── roles.py              # reaction roles + /role, per-server persistence
+│   ├── roles.py              # per-server role setup, reaction picker + /role
 │   ├── moderation.py         # kick/ban/mute/warn + spam filter
 │   ├── utility.py            # serverinfo, poll, remind
 │   └── faq.py                # /faqload + /ask — the RAG pipeline
 │
-├── data/                     # persisted role-message IDs + FAQ knowledge bases (gitignored)
+├── data/                     # persisted role settings + FAQ knowledge bases (gitignored)
 │
-├── main.py                   # bot entrypoint, intents, cog loader
+├── main.py                   # bot entrypoint, intents, cog loader, error handler
 ├── Dockerfile
 ├── .dockerignore
 ├── .env.example
@@ -43,6 +44,20 @@ hearth/
 ├── requirements.txt
 └── README.md
 ```
+---
+## Setting Up Roles
+
+Each server chooses its own pickable roles — no code changes needed:
+
+1. `/roleadd emoji:🎨 role:@Artists` — repeat for each role (up to 20)
+2. `/rolesetup` — posts the picker message in the current channel
+
+Members then react to the picker or use `/role`. Admins can check the list
+with `/rolelist` and drop a role with `/roleremove`; run `/rolesetup` again to
+post an updated picker. Hearth refuses roles it can't safely hand out:
+`@everyone`, bot-managed roles, roles with Administrator permission, roles
+above Hearth's own role, and roles above the admin's own highest role.
+
 ---
 ## How It Works — The FAQ System
 1. **Loading** — an admin runs `/faqload` and attaches a `.txt`/`.md` file; the content is split into ~200-word chunks
@@ -87,12 +102,15 @@ docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 | Command | Description |
 |---|---|
 | `/ping` | Health check |
+| `/roleadd` | Add a pickable role with its emoji (admin only) |
+| `/roleremove` | Remove a pickable role (admin only) |
+| `/rolelist` | Show this server's pickable roles |
 | `/rolesetup` | Post the reaction-role picker (admin only) |
-| `/role` | Toggle a role on/off for yourself |
+| `/role` | Toggle one of the pickable roles on/off for yourself |
 | `/kick`, `/ban`, `/mute`, `/warn` | Moderation actions (permission-gated) |
 | `/serverinfo` | Show server stats |
 | `/poll` | Post a quick 👍/👎 poll |
-| `/remind` | Get DM'd a reminder after N minutes |
+| `/remind` | Get DM'd a reminder after N minutes (up to one week) |
 | `/faqload` | Load a server's FAQ knowledge base from a file (admin only) |
 | `/ask` | Ask a question, answered from that server's FAQ |
 ---
@@ -110,8 +128,8 @@ docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 Built as a reference implementation for common Discord bot use cases —
 onboarding, community management, moderation, support — rather than a
 single-purpose bot. A server admin can drop Hearth into their own server and
-have it fully configured with their own roles and FAQ content in two
-commands, no code changes required.
+set it up with their own roles (`/roleadd`, `/rolesetup`) and FAQ content
+(`/faqload`) from inside Discord, no code changes required.
 
 ---
 ## Known Limitation
@@ -125,7 +143,9 @@ designed to say it doesn't have that information rather than guess.
 ## Notes
 - Each server's FAQ content and role-picker message are fully isolated — one server's setup never affects another's
 - No vector database — cosine similarity over plain `numpy` arrays is sufficient at this scale and avoids unnecessary dependency weight
-- Spam filter and warnings are in-memory per session; moderation history does not currently persist across restarts
+- Spam filter and warnings are kept per server, in memory; moderation history does not currently persist across restarts
+- Reminders are held in memory too — a reminder still waiting when the bot restarts is lost
+- Servers set up with an older version of Hearth (hardcoded Creative/Gaming/Dev roles) are carried over automatically the first time they're used
 ---
 ## Author
 **Manish Pandeya** · [github.com/maniesh-lab](https://github.com/maniesh-lab)

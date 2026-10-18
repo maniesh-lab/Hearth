@@ -28,7 +28,10 @@ class Onboarding(commands.Cog):
             )
             channel_embed.set_thumbnail(url=member.display_avatar.url)
             channel_embed.set_footer(text=f"Member #{member.guild.member_count}")
-            await channel.send(embed=channel_embed)
+            try:
+                await channel.send(embed=channel_embed)
+            except discord.Forbidden:
+                pass  # bot can't post in the system channel
 
 async def setup(bot):
     await bot.add_cog(Onboarding(bot))
