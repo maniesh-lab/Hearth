@@ -1,5 +1,6 @@
 discord.py
 python-dotenv
-sentence-transformers
 groq
+google-genai
 numpy
+tzdata
