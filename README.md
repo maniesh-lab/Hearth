@@ -21,7 +21,7 @@ into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 - **Moderation** — kick, ban, timeout-based mute, warnings and an automatic spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
 - **Saved warnings and a mod log** — warnings survive restarts (`/warnings`, `/clearwarnings`), and every kick, ban, mute and warning can be recorded in a log channel
 - **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; survives restarts
-- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; points add up to six levels (Newbie → Legend), level-ups are announced, and `/leaderboard` shows the top 10
+- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; points add up to six levels (Newbie → Legend), level-ups are announced, `/leaderboard` shows the top 10, and optional level roles show each member's level in the member list
 - **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers come only from that server's own content
 - **Utility** — server info, quick polls, personal reminders
 - **Per-server isolation** — every server has its own settings, roles, FAQ, warnings, deadlines and respect points
@@ -131,7 +131,7 @@ pytest
 ---
 ## Setting It Up in Your Server
 Admin commands need **Manage Server** (welcome, mod log), **Manage Roles**
-(roles) or **Moderate Members** (warnings); Discord hides them from everyone else.
+(roles, level roles) or **Moderate Members** (warnings); Discord hides them from everyone else.
 
 **Welcome**
 - `/welcome channel #general` — where the public welcome goes (default: the server's system channel)
@@ -192,6 +192,25 @@ Points add up to levels, and each new level is announced in the channel:
 
 `/respect` shows anyone's points, level and rank; `/leaderboard` shows the top 10.
 
+**Level roles (optional).** An admin with Manage Roles runs `/levelroles on`, and
+Hearth creates one role per level, like `Helper (25+ respect)`, and gives every
+member the role for their current level. From then on:
+
+- When someone levels up, Hearth swaps their old level role for the new one, so
+  each member has exactly one.
+- The roles are set to show separately, so the member list is grouped by level.
+- On servers with **Boost Level 2**, the level emoji becomes the role icon shown
+  beside the member's name in chat. Without boosts, the emoji goes in the role
+  name instead (`🤝 Helper (25+ respect)`).
+- The roles have no color and no permissions, so names keep their usual color.
+- They're created at the bottom of the role list. A member who also has a
+  higher role that's shown separately (like Moderator) is listed under that one;
+  drag the level roles higher in **Server Settings → Roles** if you'd rather they
+  win. Hearth's own role must stay above them.
+
+`/levelroles on` can be run again at any time to recreate a deleted level role.
+`/levelroles off` deletes the level roles; everyone keeps their points and levels.
+
 ---
 ## How It Works — The FAQ System
 1. **Loading** — an admin runs `/faqload` and attaches a `.txt`/`.md` file (up to 1 MB); the content is split into ~200-word chunks
@@ -214,6 +233,7 @@ Points add up to levels, and each new level is announced in the channel:
 | `/deadline add` · `list` · `remove` | Shared deadlines with reminders a day before |
 | `/respect` | Show someone's respect points, level and rank |
 | `/leaderboard` | Top 10 most respected members in this server |
+| `/levelroles on` · `off` | Give members a role for their respect level (admin) |
 | `/faqload` | Load a server's FAQ knowledge base from a file (admin) |
 | `/ask` | Ask a question, answered from that server's FAQ |
 | `/serverinfo` | Show server stats |

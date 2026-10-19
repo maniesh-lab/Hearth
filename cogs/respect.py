@@ -10,8 +10,14 @@ How a thank-you is counted:
 
 Points add up to levels. Reaching a new level is announced in the channel.
 
+Optional level roles (/levelroles on|off): Hearth creates one role per level
+("Helper (25+ respect)"), shown separately in the member list, and swaps a
+member's role when they level up. On servers with Boost Level 2 the level
+emoji becomes the role icon beside their name; elsewhere it goes in the
+role name instead. The roles have no color, so names keep their usual color.
+
 Saved per server in data/respect.db (SQLite), so each server has its own
-scores and leaderboard.
+scores and leaderboard. Level-role settings live in data/hearth.db.
 """
 
 import re
@@ -22,6 +28,8 @@ from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+import storage
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "respect.db"
 
@@ -37,6 +45,9 @@ LEVELS = [
     (500, "Veteran", "🔥"),
     (1000, "Legend", "👑"),
 ]
+
+LEVEL_ROLES_SETTING = "level_roles"  # "on" while level roles are turned on
+ROLE_ID_SETTING = "level_role_{}"    # the role ID for each level number
 
 # Whole words only, so "type" or "thanksgiving" don't count.
 THANKS_RE = re.compile(
@@ -77,6 +88,14 @@ def level_label(number, name):
     """e.g. "🤝 Helper" — the emoji and name shown in every message."""
     emoji = level_emoji(number)
     return f"{emoji} {name}" if emoji else name
+
+
+def level_role_name(number, with_emoji):
+    """e.g. "Helper (25+ respect)". The emoji goes in the name only when the
+    server can't show it as a role icon."""
+    needed, name, emoji = LEVELS[number - 1]
+    base = f"{name} ({needed}+ respect)"
+    return f"{emoji} {base}" if with_emoji else base
 
 
 class RespectStore:
@@ -138,6 +157,11 @@ class RespectStore:
         self.db.commit()
         return self.points(guild_id, receiver_id)
 
+    def all_points(self, guild_id):
+        return self.db.execute(
+            "SELECT user_id, points FROM respect WHERE guild_id = ? AND points > 0", (guild_id,)
+        ).fetchall()
+
     def top(self, guild_id, limit=10):
         return self.db.execute(
             "SELECT user_id, points FROM respect WHERE guild_id = ? AND points > 0 "
@@ -158,9 +182,39 @@ class RespectStore:
 
 
 class Respect(commands.Cog):
-    def __init__(self, bot, store=None):
+    def __init__(self, bot, store=None, db=None):
         self.bot = bot
         self.store = store or RespectStore()
+        self.db = db or storage.connect()
+
+    # --- level roles ---
+
+    def roles_on(self, guild_id):
+        return storage.get_setting(self.db, guild_id, LEVEL_ROLES_SETTING) == "on"
+
+    def _level_roles(self, guild):
+        """{level number: Role} for the level roles that still exist."""
+        roles = {}
+        for number in range(1, len(LEVELS) + 1):
+            role_id = storage.get_setting(self.db, guild.id, ROLE_ID_SETTING.format(number))
+            role = guild.get_role(int(role_id)) if role_id else None
+            if role is not None:
+                roles[number] = role
+        return roles
+
+    async def _set_level_role(self, member, number, roles):
+        """Give the member their level's role and take away the other level
+        roles, so they only ever have one. Returns False if Discord refused."""
+        wanted = roles.get(number)
+        old = [role for n, role in roles.items() if n != number and role in member.roles]
+        try:
+            if old:
+                await member.remove_roles(*old, reason="Respect level changed")
+            if wanted is not None and wanted not in member.roles:
+                await member.add_roles(wanted, reason=f"Reached respect level {number}")
+        except discord.HTTPException:
+            return False  # e.g. the level roles were moved above Hearth's own role
+        return True
 
     async def _thanked_people(self, message):
         """Everyone this thank-you is aimed at: @mentions, plus the person replied to."""
@@ -204,6 +258,11 @@ class Respect(commands.Cog):
             before, _ = level_for(self.store.points(guild_id, person.id))
             total = self.store.give(guild_id, message.author.id, person.id, now)
             after, name = level_for(total)
+
+            if after > before and self.roles_on(guild_id):
+                member = message.guild.get_member(person.id)
+                if member is not None:
+                    await self._set_level_role(member, after, self._level_roles(message.guild))
 
             if after > before:
                 try:
@@ -257,6 +316,105 @@ class Respect(commands.Cog):
 
         embed = discord.Embed(title="🏆 Respect leaderboard", description="\n".join(lines), color=discord.Color.dark_teal())
         await interaction.response.send_message(embed=embed)
+
+
+    levelroles = app_commands.Group(
+        name="levelroles",
+        description="Give members a role for their respect level",
+        guild_only=True,
+        default_permissions=discord.Permissions(manage_roles=True),
+    )
+
+    async def _check_roles_admin(self, interaction):
+        if not interaction.user.guild_permissions.manage_roles:
+            await interaction.response.send_message("You need Manage Roles to change this.", ephemeral=True)
+            return False
+        if not interaction.guild.me.guild_permissions.manage_roles:
+            await interaction.response.send_message("I need the Manage Roles permission first.", ephemeral=True)
+            return False
+        return True
+
+    @levelroles.command(name="on", description="Create the level roles and give everyone their current one")
+    async def level_roles_on(self, interaction: discord.Interaction):
+        if not await self._check_roles_admin(interaction):
+            return
+        guild = interaction.guild
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        icons = "ROLE_ICONS" in guild.features  # Boost Level 2
+        roles = self._level_roles(guild)
+        created = 0
+        try:
+            # Legend first: each new role is created at the bottom, so creating
+            # them top-down leaves Newbie lowest and Legend highest.
+            for number in range(len(LEVELS), 0, -1):
+                if number in roles:
+                    continue  # already exists (running "on" again repairs missing ones)
+                options = {
+                    "name": level_role_name(number, with_emoji=not icons),
+                    "permissions": discord.Permissions.none(),
+                    "hoist": True,  # shown separately in the member list
+                    "mentionable": False,
+                    "reason": "Hearth respect level roles",
+                }
+                if icons:
+                    options["display_icon"] = level_emoji(number)
+                role = await guild.create_role(**options)
+                storage.set_setting(self.db, guild.id, ROLE_ID_SETTING.format(number), role.id)
+                roles[number] = role
+                created += 1
+        except discord.HTTPException:
+            await interaction.followup.send(
+                "I couldn't create the level roles. Check that I have Manage Roles and try again.", ephemeral=True
+            )
+            return
+
+        storage.set_setting(self.db, guild.id, LEVEL_ROLES_SETTING, "on")
+
+        given = failed = 0
+        for user_id, points in self.store.all_points(guild.id):
+            member = guild.get_member(user_id)
+            if member is None:
+                continue  # left the server
+            if await self._set_level_role(member, level_for(points)[0], roles):
+                given += 1
+            else:
+                failed += 1
+
+        text = (
+            f"Level roles are on. Created {created} role(s) and gave {given} member(s) their level role. "
+            "They show separately in the member list, and change automatically on each level-up."
+        )
+        if icons:
+            text += "\nEach role has its level emoji as a role icon."
+        else:
+            text += "\nRole icons need Boost Level 2, so the emoji is in the role name for now."
+        if failed:
+            text += f"\n⚠️ I couldn't update {failed} member(s). Move my role above the level roles."
+        await interaction.followup.send(text, ephemeral=True)
+
+    @levelroles.command(name="off", description="Stop giving level roles and delete them (points are kept)")
+    async def level_roles_off(self, interaction: discord.Interaction):
+        if not await self._check_roles_admin(interaction):
+            return
+        guild = interaction.guild
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        deleted = failed = 0
+        for role in self._level_roles(guild).values():
+            try:
+                await role.delete(reason="Hearth level roles turned off")
+                deleted += 1
+            except discord.HTTPException:
+                failed += 1
+        for number in range(1, len(LEVELS) + 1):
+            storage.delete_setting(self.db, guild.id, ROLE_ID_SETTING.format(number))
+        storage.delete_setting(self.db, guild.id, LEVEL_ROLES_SETTING)
+
+        text = f"Level roles are off. Deleted {deleted} role(s). Points and levels are kept."
+        if failed:
+            text += f"\n⚠️ I couldn't delete {failed} role(s) — remove them in Server Settings → Roles."
+        await interaction.followup.send(text, ephemeral=True)
 
 
 async def setup(bot):

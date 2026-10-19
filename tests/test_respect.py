@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from cogs.respect import Respect, RespectStore, level_for, level_label, next_level, says_thanks
-from conftest import make_guild, make_interaction, make_member
+from conftest import make_guild, make_interaction, make_member, reply_text
 
 
 @pytest.mark.parametrize("text", ["thanks!", "Thank you so much", "thank-you!", "thankyou", "ty", "thx bro", "tysm", "THANK U"])
@@ -37,8 +37,8 @@ def test_every_level_has_an_emoji_in_its_label():
 
 
 @pytest.fixture
-def cog(tmp_path):
-    return Respect(MagicMock(), RespectStore(tmp_path / "respect.db"))
+def cog(tmp_path, db):
+    return Respect(MagicMock(), RespectStore(tmp_path / "respect.db"), db)
 
 
 def thanks_message(author, text, mentions=(), guild_id=1):
@@ -98,3 +98,122 @@ def test_leaderboard_and_respect_commands(cog):
 
     asyncio.run(cog.leaderboard.callback(cog, interaction))
     assert "🤝 user2 — 25 (Helper)" in interaction.response.send_message.await_args.kwargs["embed"].description
+
+
+# --- level roles ---------------------------------------------------------
+
+def role_guild(features=(), members=()):
+    """A server where create_role hands back numbered fake roles."""
+    guild = make_guild()
+    guild.features = list(features)
+    guild.me.guild_permissions.manage_roles = True
+    made = {}
+
+    async def create_role(**options):
+        role = MagicMock(name=options["name"])
+        role.id = 100 + len(made)
+        role.options = options
+        role.delete = AsyncMock()
+        made[role.id] = role
+        return role
+
+    guild.create_role = AsyncMock(side_effect=create_role)
+    guild.get_role = lambda role_id: made.get(role_id)
+    by_id = {m.id: m for m in members}
+    guild.get_member = lambda user_id: by_id.get(user_id)
+    return guild, made
+
+
+def role_member(user_id):
+    member = make_member(user_id)
+    member.roles = []
+    member.guild_permissions.manage_roles = True
+
+    async def add(*roles, reason=None):
+        member.roles.extend(roles)
+
+    async def remove(*roles, reason=None):
+        for role in roles:
+            member.roles.remove(role)
+
+    member.add_roles = AsyncMock(side_effect=add)
+    member.remove_roles = AsyncMock(side_effect=remove)
+    return member
+
+
+def give_points(cog, user_id, points):
+    for giver in range(points):
+        cog.store.give(1, 1000 + giver, user_id, now=0)
+
+
+def test_turning_roles_on_creates_six_hoisted_roles_and_hands_them_out(cog):
+    bob = role_member(2)
+    give_points(cog, 2, 25)
+    guild, made = role_guild(members=[bob])
+    interaction = make_interaction(role_member(1), guild)
+
+    asyncio.run(cog.level_roles_on.callback(cog, interaction))
+
+    names = [call.kwargs["name"] for call in guild.create_role.await_args_list]
+    assert names[0] == "👑 Legend (1000+ respect)"  # top level created first...
+    assert names[-1] == "🌱 Newbie (1+ respect)"  # ...so Newbie ends up lowest
+    first = guild.create_role.await_args_list[0].kwargs
+    assert first["hoist"] is True and "display_icon" not in first and "color" not in first
+    assert [r.options["name"] for r in bob.roles] == ["🤝 Helper (25+ respect)"]
+    assert "Role icons need Boost Level 2" in interaction.followup.send.await_args.args[0]
+
+
+def test_boosted_servers_get_role_icons_instead_of_emoji_names(cog):
+    guild, made = role_guild(features=["ROLE_ICONS"])
+    asyncio.run(cog.level_roles_on.callback(cog, make_interaction(role_member(1), guild)))
+    legend = guild.create_role.await_args_list[0].kwargs
+    assert legend["name"] == "Legend (1000+ respect)"
+    assert legend["display_icon"] == "👑"
+
+
+def test_level_up_swaps_the_role(cog):
+    bob = role_member(2)
+    guild, made = role_guild(members=[bob])
+    asyncio.run(cog.level_roles_on.callback(cog, make_interaction(role_member(1), guild)))
+
+    give_points(cog, 2, 1)  # Newbie
+    asyncio.run(cog._set_level_role(bob, 1, cog._level_roles(guild)))
+    give_points(cog, 2, 23)  # 24 points: one thank-you away from Helper
+
+    message = thanks_message(make_member(50), "thank you", [bob])
+    message.guild = guild
+    asyncio.run(cog.on_message(message))
+
+    assert [r.options["name"] for r in bob.roles] == ["🤝 Helper (25+ respect)"]
+
+
+def test_no_roles_when_level_roles_are_off(cog):
+    bob = role_member(2)
+    guild, made = role_guild(members=[bob])
+    message = thanks_message(make_member(50), "thanks", [bob])
+    message.guild = guild
+    asyncio.run(cog.on_message(message))
+    assert cog.store.points(1, 2) == 1
+    bob.add_roles.assert_not_awaited()
+
+
+def test_turning_roles_off_deletes_them_and_keeps_points(cog):
+    give_points(cog, 2, 3)
+    guild, made = role_guild(members=[role_member(2)])
+    admin = role_member(1)
+    asyncio.run(cog.level_roles_on.callback(cog, make_interaction(admin, guild)))
+    asyncio.run(cog.level_roles_off.callback(cog, make_interaction(admin, guild)))
+
+    assert all(role.delete.await_count == 1 for role in made.values())
+    assert not cog.roles_on(1)
+    assert cog.store.points(1, 2) == 3
+
+
+def test_level_roles_need_manage_roles(cog):
+    guild, made = role_guild()
+    user = role_member(1)
+    user.guild_permissions.manage_roles = False
+    interaction = make_interaction(user, guild)
+    asyncio.run(cog.level_roles_on.callback(cog, interaction))
+    assert "Manage Roles" in reply_text(interaction)
+    guild.create_role.assert_not_awaited()
