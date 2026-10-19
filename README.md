@@ -15,6 +15,7 @@ so any single feature can be reused or dropped into another bot.
 - Self-serve role assignment — each server picks its own roles with `/roleadd`, then members use a reaction-role picker *or* the `/role` slash command; both toggle the same roles
 - Moderation basics — kick, ban, timeout-based mute, warnings, and an automated spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
 - Utility commands — server info, quick polls, timed reminders
+- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; points add up to six levels (Newbie → Legend), level-ups are announced, and `/leaderboard` shows the server's top 10
 - **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers are retrieved from that server's own content, not hardcoded or hallucinated
 - Per-server isolation — every server gets its own FAQ knowledge base, role list, role-picker message, warnings and spam counts, so the same bot can serve multiple clients' servers with completely separate content
 - Local embeddings (`sentence-transformers`) — no API cost for the retrieval step
@@ -32,9 +33,10 @@ hearth/
 │   ├── roles.py              # per-server role setup, reaction picker + /role
 │   ├── moderation.py         # kick/ban/mute/warn + spam filter
 │   ├── utility.py            # serverinfo, poll, remind
+│   ├── respect.py            # thank-you points, levels, leaderboard (SQLite)
 │   └── faq.py                # /faqload + /ask — the RAG pipeline
 │
-├── data/                     # persisted role settings + FAQ knowledge bases (gitignored)
+├── data/                     # persisted role settings, FAQ knowledge bases, respect.db (gitignored)
 │
 ├── main.py                   # bot entrypoint, intents, cog loader, error handler
 ├── Dockerfile
@@ -57,6 +59,30 @@ with `/rolelist` and drop a role with `/roleremove`; run `/rolesetup` again to
 post an updated picker. Hearth refuses roles it can't safely hand out:
 `@everyone`, bot-managed roles, roles with Administrator permission, roles
 above Hearth's own role, and roles above the admin's own highest role.
+
+---
+## How Respect Points Work
+
+When a message says thanks (*thanks*, *thank you*, *ty*, *thx*…) and is aimed
+at someone — they're @mentioned, or it's a reply to their message — they get
++1 respect. To keep it fair:
+
+- You can't thank yourself or a bot, and "no thanks" doesn't count
+- The same person can give the same person +1 only once an hour
+- One message counts for at most 5 people
+
+Points add up to levels, and each new level is announced in the channel:
+
+| Respect | Level |
+|---|---|
+| 1 | 1 — Newbie |
+| 25 | 2 — Helper |
+| 50 | 3 — Contributor |
+| 100 | 4 — Regular |
+| 500 | 5 — Veteran |
+| 1000 | 6 — Legend |
+
+Scores are kept per server in a small SQLite database (`data/respect.db`).
 
 ---
 ## How It Works — The FAQ System
@@ -109,6 +135,8 @@ docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 | `/role` | Toggle one of the pickable roles on/off for yourself |
 | `/kick`, `/ban`, `/mute`, `/warn` | Moderation actions (permission-gated) |
 | `/serverinfo` | Show server stats |
+| `/respect` | Show your (or someone's) respect points, level and rank |
+| `/leaderboard` | Top 10 most respected members in this server |
 | `/poll` | Post a quick 👍/👎 poll |
 | `/remind` | Get DM'd a reminder after N minutes (up to one week) |
 | `/faqload` | Load a server's FAQ knowledge base from a file (admin only) |
@@ -120,6 +148,7 @@ docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 | `discord.py` | Bot framework, slash commands |
 | `sentence-transformers` | Local text embeddings |
 | `numpy` | Cosine similarity search |
+| `sqlite3` | Respect points storage (built into Python) |
 | `groq` | LLM inference via Groq (free tier) |
 | `python-dotenv` | Environment variable loading |
 | `Docker` | Containerized, portable deployment |

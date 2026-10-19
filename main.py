@@ -15,6 +15,7 @@ COGS = [
     "cogs.moderation",
     "cogs.utility",
     "cogs.faq",
+    "cogs.respect",
 ]
 
 
