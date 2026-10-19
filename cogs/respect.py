@@ -28,14 +28,14 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "respect.db"
 COOLDOWN_SECONDS = 60 * 60  # same giver -> same receiver: once an hour
 MAX_THANKED_PER_MESSAGE = 5  # "thanks @a @b @c ..." counts for at most 5 people
 
-# (points needed, level name). Level 1 starts at the very first thank-you.
+# (points needed, level name, emoji). Level 1 starts at the very first thank-you.
 LEVELS = [
-    (1, "Newbie"),
-    (25, "Helper"),
-    (50, "Contributor"),
-    (100, "Regular"),
-    (500, "Veteran"),
-    (1000, "Legend"),
+    (1, "Newbie", "🌱"),
+    (25, "Helper", "🤝"),
+    (50, "Contributor", "🧩"),
+    (100, "Regular", "⭐"),
+    (500, "Veteran", "🔥"),
+    (1000, "Legend", "👑"),
 ]
 
 # Whole words only, so "type" or "thanksgiving" don't count.
@@ -54,7 +54,7 @@ def says_thanks(text):
 def level_for(points):
     """Return (level number, level name) for a point total. Level 0 = no points yet."""
     number, name = 0, "No level yet"
-    for i, (needed, level_name) in enumerate(LEVELS, start=1):
+    for i, (needed, level_name, _) in enumerate(LEVELS, start=1):
         if points >= needed:
             number, name = i, level_name
     return number, name
@@ -62,10 +62,21 @@ def level_for(points):
 
 def next_level(points):
     """Return (points needed, level name) for the next level, or None at the top."""
-    for needed, name in LEVELS:
+    for needed, name, _ in LEVELS:
         if points < needed:
             return needed, name
     return None
+
+
+def level_emoji(number):
+    """The emoji for a level number ("" for level 0)."""
+    return LEVELS[number - 1][2] if number >= 1 else ""
+
+
+def level_label(number, name):
+    """e.g. "🤝 Helper" — the emoji and name shown in every message."""
+    emoji = level_emoji(number)
+    return f"{emoji} {name}" if emoji else name
 
 
 class RespectStore:
@@ -197,7 +208,7 @@ class Respect(commands.Cog):
             if after > before:
                 try:
                     await message.channel.send(
-                        f"🎉 {person.mention} reached **Level {after} — {name}** "
+                        f"🎉 {person.mention} reached **Level {after} — {level_label(after, name)}** "
                         f"({total} respect)!"
                     )
                 except discord.HTTPException:
@@ -215,13 +226,17 @@ class Respect(commands.Cog):
             text = f"**{member.display_name}** has no respect points yet. Thank them when they help you!"
         else:
             rank = self.store.rank(interaction.guild.id, member.id)
-            text = f"**{member.display_name}** — Level {number} ({name}) · {points} respect · #{rank} in this server"
+            text = (
+                f"**{member.display_name}** — {level_emoji(number)} Level {number} ({name}) · "
+                f"{points} respect · #{rank} in this server"
+            )
             upcoming = next_level(points)
             if upcoming:
                 needed, next_name = upcoming
-                text += f"\n{needed - points} more to reach {next_name}."
+                next_number = level_for(needed)[0]
+                text += f"\n{needed - points} more to reach {level_label(next_number, next_name)}."
             else:
-                text += "\nTop level reached."
+                text += "\nTop level reached. 👑"
 
         await interaction.response.send_message(text)
 
@@ -237,8 +252,8 @@ class Respect(commands.Cog):
         for place, (user_id, points) in enumerate(rows, start=1):
             member = interaction.guild.get_member(user_id)
             who = member.display_name if member else f"Former member ({user_id})"
-            _, name = level_for(points)
-            lines.append(f"**{place}.** {who} — {points} ({name})")
+            number, name = level_for(points)
+            lines.append(f"**{place}.** {level_emoji(number)} {who} — {points} ({name})")
 
         embed = discord.Embed(title="🏆 Respect leaderboard", description="\n".join(lines), color=discord.Color.dark_teal())
         await interaction.response.send_message(embed=embed)

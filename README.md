@@ -183,12 +183,12 @@ Points add up to levels, and each new level is announced in the channel:
 
 | Respect | Level |
 |---|---|
-| 1 | 1 — Newbie |
-| 25 | 2 — Helper |
-| 50 | 3 — Contributor |
-| 100 | 4 — Regular |
-| 500 | 5 — Veteran |
-| 1000 | 6 — Legend |
+| 1 | 1 — 🌱 Newbie |
+| 25 | 2 — 🤝 Helper |
+| 50 | 3 — 🧩 Contributor |
+| 100 | 4 — ⭐ Regular |
+| 500 | 5 — 🔥 Veteran |
+| 1000 | 6 — 👑 Legend |
 
 `/respect` shows anyone's points, level and rank; `/leaderboard` shows the top 10.
 

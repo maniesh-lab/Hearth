@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cogs.respect import Respect, RespectStore, level_for, next_level, says_thanks
+from cogs.respect import Respect, RespectStore, level_for, level_label, next_level, says_thanks
 from conftest import make_guild, make_interaction, make_member
 
 
@@ -30,6 +30,12 @@ def test_next_level():
     assert next_level(1000) is None
 
 
+def test_every_level_has_an_emoji_in_its_label():
+    assert level_label(1, "Newbie") == "🌱 Newbie"
+    assert level_label(6, "Legend") == "👑 Legend"
+    assert level_label(0, "No level yet") == "No level yet"
+
+
 @pytest.fixture
 def cog(tmp_path):
     return Respect(MagicMock(), RespectStore(tmp_path / "respect.db"))
@@ -51,7 +57,7 @@ def test_thanks_gives_a_point_and_announces_level_1(cog):
     message = thanks_message(alice, "thanks @bob", [bob])
     asyncio.run(cog.on_message(message))
     assert cog.store.points(1, 2) == 1
-    assert "Level 1" in message.channel.send.await_args.args[0]
+    assert "Level 1 — 🌱 Newbie" in message.channel.send.await_args.args[0]
 
 
 def test_same_person_only_once_an_hour(cog):
@@ -86,7 +92,9 @@ def test_leaderboard_and_respect_commands(cog):
     interaction = make_interaction(make_member(1), guild)
 
     asyncio.run(cog.respect.callback(cog, interaction, bob))
-    assert "Level 2 (Helper) · 25 respect · #1" in interaction.response.send_message.await_args.args[0]
+    text = interaction.response.send_message.await_args.args[0]
+    assert "🤝 Level 2 (Helper) · 25 respect · #1" in text
+    assert "25 more to reach 🧩 Contributor." in text
 
     asyncio.run(cog.leaderboard.callback(cog, interaction))
-    assert "user2 — 25 (Helper)" in interaction.response.send_message.await_args.kwargs["embed"].description
+    assert "🤝 user2 — 25 (Helper)" in interaction.response.send_message.await_args.kwargs["embed"].description
