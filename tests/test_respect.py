@@ -7,12 +7,12 @@ from cogs.respect import Respect, RespectStore, level_for, next_level, says_than
 from conftest import make_guild, make_interaction, make_member
 
 
-@pytest.mark.parametrize("text", ["thanks!", "Thank you so much", "ty", "thx bro", "tysm", "THANK U"])
+@pytest.mark.parametrize("text", ["thanks!", "Thank you so much", "thank-you!", "thankyou", "ty", "thx bro", "tysm", "THANK U"])
 def test_thank_you_words_count(text):
     assert says_thanks(text)
 
 
-@pytest.mark.parametrize("text", ["type this", "thanksgiving plans", "no thanks", "nice work"])
+@pytest.mark.parametrize("text", ["type this", "thanksgiving plans", "no thanks", "no thank-you", "nice work"])
 def test_other_words_dont_count(text):
     assert not says_thanks(text)
 

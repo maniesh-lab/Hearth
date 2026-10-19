@@ -40,11 +40,11 @@ LEVELS = [
 
 # Whole words only, so "type" or "thanksgiving" don't count.
 THANKS_RE = re.compile(
-    r"\b(thanks|thank\s*you|thank\s*u|thankyou|thanx|thnx|thx|tysm|tyvm|ty)\b",
+    r"\b(thanks|thank[\s-]*you|thank[\s-]*u|thanx|thnx|thx|tysm|tyvm|ty)\b",  # "thank-you" too
     re.IGNORECASE,
 )
 # "no thanks" is a polite refusal, not a thank-you.
-NO_THANKS_RE = re.compile(r"\bno\s+(thanks|thank\s*you|thx)\b", re.IGNORECASE)
+NO_THANKS_RE = re.compile(r"\bno\s+(thanks|thank[\s-]*you|thx)\b", re.IGNORECASE)
 
 
 def says_thanks(text):
