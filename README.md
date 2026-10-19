@@ -55,6 +55,8 @@ hearth/
 ├── .env.example
 ├── requirements.txt          # what the bot needs to run
 ├── requirements-dev.txt      # + pytest and ruff for development
+├── pytest.ini                # tells pytest where the tests are
+├── ruff.toml                 # lint rules: catches real bugs, not style
 └── README.md
 ```
 
