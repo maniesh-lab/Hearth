@@ -1,3 +1,9 @@
+"""
+Small everyday commands: /serverinfo, /poll (a 👍/👎 vote) and /remind
+(a DM after up to a week). Reminders are kept in memory, so one still waiting
+when the bot restarts is lost; /deadline is the restart-safe option.
+"""
+
 import asyncio
 
 import discord
