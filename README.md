@@ -20,7 +20,7 @@ so any single feature can be reused or dropped into another bot.
 - Per-server isolation — every server gets its own FAQ knowledge base, role list, role-picker message, warnings and spam counts, so the same bot can serve multiple clients' servers with completely separate content
 - Local embeddings (`sentence-transformers`) — no API cost for the retrieval step
 - Free-tier LLM inference via Groq — no paid API spend required to run or demo
-- Restart-safe — role lists, role-picker messages and FAQ knowledge bases persist across restarts and redeploys
+- Restart-safe — role lists, role-picker messages, FAQ knowledge bases and respect points persist across restarts and redeploys
 - Non-blocking AI calls — embeddings run in a background thread and the Groq call is async, so one `/ask` never freezes the bot for other servers
 - Containerized with Docker for consistent, portable deployment
 ---
@@ -93,6 +93,18 @@ Scores are kept per server in a small SQLite database (`data/respect.db`).
 5. **Generation** — those chunks are inserted into a prompt instructing the LLM to answer *only* from that context, then sent to Groq for a fast, grounded response
 ---
 ## How to Run
+Requires Python 3.10 or newer.
+
+**0. Create the bot on Discord (one time)**
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an application, open **Bot**, and copy its token
+2. On the same page, turn on **Server Members Intent** and **Message Content Intent** — Hearth won't start without them (welcome messages need the first; the spam filter and respect points need the second)
+3. Invite it to your server with this link, putting your application's ID in place of `YOUR_APP_ID`:
+   ```
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=1099780148294
+   ```
+   That grants exactly what the commands use: View Channels, Send Messages, Embed Links, Read Message History, Add Reactions, Manage Roles, Kick Members, Ban Members and Moderate Members
+4. In **Server Settings → Roles**, drag Hearth's role above every role it should hand out or moderate — Discord won't let a bot act on roles above its own
+
 **1. Clone the repo**
 ```bash
 git clone https://github.com/maniesh-lab/hearth
@@ -111,7 +123,7 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 ```
-Add your Discord bot token (from the [Discord Developer Portal](https://discord.com/developers/applications)) and a free Groq API key (from [console.groq.com](https://console.groq.com)) to `.env`.
+Add your Discord bot token (step 0) and a free Groq API key (from [console.groq.com](https://console.groq.com)) to `.env` — written as `KEY=value`, with no spaces or quotes, so it works with both `python main.py` and `docker run --env-file`. Without a Groq key the bot still runs; only `/ask` is unavailable.
 
 **5. Run the bot**
 ```bash
@@ -123,6 +135,9 @@ python main.py
 docker build -t hearth .
 docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 ```
+The `-v` part keeps the `data/` folder (roles, FAQs, respect points) on your machine, so nothing is lost when the container is rebuilt.
+
+Slash commands can take a minute to appear in Discord after the first start.
 ---
 ## Commands
 | Command | Description |
@@ -170,7 +185,7 @@ designed to say it doesn't have that information rather than guess.
 
 ---
 ## Notes
-- Each server's FAQ content and role-picker message are fully isolated — one server's setup never affects another's
+- Each server's FAQ content, role setup and respect points are fully isolated — one server's setup never affects another's
 - No vector database — cosine similarity over plain `numpy` arrays is sufficient at this scale and avoids unnecessary dependency weight
 - Spam filter and warnings are kept per server, in memory; moderation history does not currently persist across restarts
 - Reminders are held in memory too — a reminder still waiting when the bot restarts is lost
