@@ -56,7 +56,7 @@ hearth/
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt          # what the bot needs to run
-├── requirements-dev.txt      # + pytest and ruff for development
+├── requirements-test.txt     # + pytest and ruff for tests and lint
 ├── pytest.ini                # tells pytest where the tests are
 ├── ruff.toml                 # lint rules: catches real bugs, not style
 ├── LICENSE
@@ -123,7 +123,7 @@ first start.
 
 **Run the tests**
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-test.txt
 ruff check .
 pytest
 ```
