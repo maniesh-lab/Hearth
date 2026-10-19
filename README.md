@@ -3,7 +3,7 @@
 [![CI](https://github.com/maniesh-lab/Hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/maniesh-lab/Hearth/actions/workflows/ci.yml)
 
 A Discord bot that handles the basics a server needs — onboarding, roles,
-moderation, deadlines and utility commands — plus one thing most bots at this
+moderation, deadlines, respect points and utility commands — plus one thing most bots at this
 scale don't have: an AI-powered FAQ system that actually understands what it's
 answering, instead of matching keywords.
 
@@ -40,7 +40,7 @@ hearth/
 │   ├── roles.py              # per-server role setup, reaction picker + /role
 │   ├── moderation.py         # kick/ban/mute/warn, saved warnings, mod log, spam filter
 │   ├── deadlines.py          # /deadline board + reminder loop
-│   ├── respect.py            # thank-you points, levels, leaderboard
+│   ├── respect.py            # thank-you points, levels, leaderboard, level roles
 │   ├── utility.py            # serverinfo, poll, remind
 │   └── faq.py                # /faqload + /ask — the RAG pipeline
 │
@@ -256,9 +256,18 @@ member the role for their current level. From then on:
 ---
 ## Hosting for Free
 A Discord bot has to stay connected all the time, so hosts that "sleep" when
-idle don't work. Because Hearth needs only ~100 MB of RAM, it fits on a small
-always-on free server (for example Oracle Cloud's Always Free tier) or an old
-laptop or Raspberry Pi at home, using the Docker commands above.
+idle don't work. Hearth itself uses about 80 MB of RAM with every feature
+loaded (measured before connecting; a busy server adds a little for Discord's
+member cache and the FAQ vectors), so plan on roughly 100–150 MB. With the
+operating system and Docker on top, a server with **1 GB of RAM** is plenty —
+for example Oracle Cloud's Always Free tier, or an old laptop or Raspberry Pi
+at home.
+
+On a server, run it in the background and have Docker restart it after crashes
+and reboots:
+```bash
+docker run -d --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
+```
 
 ---
 ## Use Case
