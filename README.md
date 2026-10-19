@@ -173,10 +173,12 @@ can have up to 50 upcoming.
 ## How Respect Points Work
 When a message says thanks (*thanks*, *thank you*, *ty*, *thx*…) and is aimed at
 someone — they're @mentioned, or it's a reply to their message — they get +1
-respect. To keep it fair:
+respect. Normal thank-yous always count, even several in a row. To keep it fair:
 
 - You can't thank yourself or a bot, and "no thanks" doesn't count
-- The same person can give the same person +1 only once an hour
+- **Spam:** 5 thank-you messages within 10 minutes pauses that person's thanks
+  for 24 hours (the 5th doesn't count), and Hearth says so in the channel
+- **Farming:** one person can give the same person at most 10 points a day
 - One message counts for at most 5 people
 
 Points add up to levels, and each new level is announced in the channel:

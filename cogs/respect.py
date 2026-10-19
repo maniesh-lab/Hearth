@@ -5,8 +5,11 @@ How a thank-you is counted:
 - The message says thanks (thanks, thank you, ty, thx, ...)
 - AND it's aimed at someone: they're @mentioned, or the message is a reply to them
 - You can't thank yourself or a bot
-- The same person can give the same person +1 only once an hour,
-  so points can't be farmed by spamming "thanks"
+
+Normal thank-yous always count, even several in a row. Two rules stop abuse:
+- Spam: 5 thank-you messages within 10 minutes pauses that person's thanks
+  for 24 hours (the 5th doesn't count), and Hearth says so in the channel
+- Farming: one person can give the same person at most 10 points a day
 
 Points add up to levels. Reaching a new level is announced in the channel.
 
@@ -33,7 +36,11 @@ import storage
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "respect.db"
 
-COOLDOWN_SECONDS = 60 * 60  # same giver -> same receiver: once an hour
+SPAM_MESSAGES = 5               # this many thank-you messages...
+SPAM_WINDOW_SECONDS = 10 * 60    # ...within 10 minutes counts as spam
+SPAM_PAUSE_SECONDS = 24 * 60 * 60  # the spammer's thanks stop counting for a day
+DAILY_LIMIT_PER_PAIR = 10        # max points one person can give the same person per day
+DAY_SECONDS = 24 * 60 * 60
 MAX_THANKED_PER_MESSAGE = 5  # "thanks @a @b @c ..." counts for at most 5 people
 
 # (points needed, level name, emoji). Level 1 starts at the very first thank-you.
@@ -112,14 +119,28 @@ class RespectStore:
                 points   INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (guild_id, user_id)
             );
-            -- when each person last thanked each other person (for the cooldown)
-            CREATE TABLE IF NOT EXISTS last_thanks (
+            -- every point given, for the daily limit per pair
+            CREATE TABLE IF NOT EXISTS gives (
                 guild_id    INTEGER NOT NULL,
                 giver_id    INTEGER NOT NULL,
                 receiver_id INTEGER NOT NULL,
-                thanked_at  REAL    NOT NULL,
-                PRIMARY KEY (guild_id, giver_id, receiver_id)
+                given_at    REAL    NOT NULL
             );
+            -- every thank-you message, for spam detection
+            CREATE TABLE IF NOT EXISTS thank_messages (
+                guild_id INTEGER NOT NULL,
+                giver_id INTEGER NOT NULL,
+                sent_at  REAL    NOT NULL
+            );
+            -- people whose thanks are paused for spamming
+            CREATE TABLE IF NOT EXISTS paused (
+                guild_id INTEGER NOT NULL,
+                giver_id INTEGER NOT NULL,
+                until    REAL    NOT NULL,
+                PRIMARY KEY (guild_id, giver_id)
+            );
+            -- the old one-hour cooldown table, no longer used
+            DROP TABLE IF EXISTS last_thanks;
             """
         )
         self.db.commit()
@@ -131,15 +152,45 @@ class RespectStore:
         ).fetchone()
         return row[0] if row else 0
 
-    def on_cooldown(self, guild_id, giver_id, receiver_id, now):
+    def is_paused(self, guild_id, giver_id, now):
         row = self.db.execute(
-            "SELECT thanked_at FROM last_thanks WHERE guild_id = ? AND giver_id = ? AND receiver_id = ?",
-            (guild_id, giver_id, receiver_id),
+            "SELECT until FROM paused WHERE guild_id = ? AND giver_id = ?", (guild_id, giver_id)
         ).fetchone()
-        return row is not None and now - row[0] < COOLDOWN_SECONDS
+        return row is not None and now < row[0]
+
+    def pause(self, guild_id, giver_id, until):
+        self.db.execute(
+            """
+            INSERT INTO paused (guild_id, giver_id, until) VALUES (?, ?, ?)
+            ON CONFLICT (guild_id, giver_id) DO UPDATE SET until = excluded.until
+            """,
+            (guild_id, giver_id, until),
+        )
+        self.db.commit()
+
+    def record_thank_message(self, guild_id, giver_id, now):
+        """Remember one thank-you message. Returns how many this person sent
+        in the last SPAM_WINDOW_SECONDS, including this one."""
+        self.db.execute("DELETE FROM thank_messages WHERE sent_at < ?", (now - SPAM_WINDOW_SECONDS,))
+        self.db.execute(
+            "INSERT INTO thank_messages (guild_id, giver_id, sent_at) VALUES (?, ?, ?)",
+            (guild_id, giver_id, now),
+        )
+        self.db.commit()
+        return self.db.execute(
+            "SELECT COUNT(*) FROM thank_messages WHERE guild_id = ? AND giver_id = ? AND sent_at > ?",
+            (guild_id, giver_id, now - SPAM_WINDOW_SECONDS),
+        ).fetchone()[0]
+
+    def given_today(self, guild_id, giver_id, receiver_id, now):
+        """Points this person gave that person in the last 24 hours."""
+        return self.db.execute(
+            "SELECT COUNT(*) FROM gives WHERE guild_id = ? AND giver_id = ? AND receiver_id = ? AND given_at > ?",
+            (guild_id, giver_id, receiver_id, now - DAY_SECONDS),
+        ).fetchone()[0]
 
     def give(self, guild_id, giver_id, receiver_id, now):
-        """Add 1 point and record the time. Returns the receiver's new total."""
+        """Add 1 point and record it. Returns the receiver's new total."""
         self.db.execute(
             """
             INSERT INTO respect (guild_id, user_id, points) VALUES (?, ?, 1)
@@ -147,11 +198,9 @@ class RespectStore:
             """,
             (guild_id, receiver_id),
         )
+        self.db.execute("DELETE FROM gives WHERE given_at < ?", (now - DAY_SECONDS,))
         self.db.execute(
-            """
-            INSERT INTO last_thanks (guild_id, giver_id, receiver_id, thanked_at) VALUES (?, ?, ?, ?)
-            ON CONFLICT (guild_id, giver_id, receiver_id) DO UPDATE SET thanked_at = excluded.thanked_at
-            """,
+            "INSERT INTO gives (guild_id, giver_id, receiver_id, given_at) VALUES (?, ?, ?, ?)",
             (guild_id, giver_id, receiver_id, now),
         )
         self.db.commit()
@@ -248,15 +297,34 @@ class Respect(commands.Cog):
         if not says_thanks(message.content):
             return
 
+        people = await self._thanked_people(message)
+        if not people:
+            return  # "thanks" not aimed at anyone, so it isn't a thank-you to count
+
         now = time.time()
         guild_id = message.guild.id
+        giver = message.author
 
-        for person in await self._thanked_people(message):
-            if self.store.on_cooldown(guild_id, message.author.id, person.id, now):
+        if self.store.is_paused(guild_id, giver.id, now):
+            return
+
+        if self.store.record_thank_message(guild_id, giver.id, now) >= SPAM_MESSAGES:
+            self.store.pause(guild_id, giver.id, now + SPAM_PAUSE_SECONDS)
+            try:
+                await message.channel.send(
+                    f"⏳ **{giver.display_name}** is sending thanks too fast — "
+                    "their respect is paused for 24 hours."
+                )
+            except discord.HTTPException:
+                pass
+            return
+
+        for person in people:
+            if self.store.given_today(guild_id, giver.id, person.id, now) >= DAILY_LIMIT_PER_PAIR:
                 continue
 
             before, _ = level_for(self.store.points(guild_id, person.id))
-            total = self.store.give(guild_id, message.author.id, person.id, now)
+            total = self.store.give(guild_id, giver.id, person.id, now)
             after, name = level_for(total)
 
             if after > before and self.roles_on(guild_id):

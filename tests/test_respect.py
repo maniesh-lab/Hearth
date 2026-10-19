@@ -60,10 +60,79 @@ def test_thanks_gives_a_point_and_announces_level_1(cog):
     assert "Level 1 — 🌱 Newbie" in message.channel.send.await_args.args[0]
 
 
-def test_same_person_only_once_an_hour(cog):
+@pytest.fixture
+def clock(monkeypatch):
+    """A fake clock for the respect cog: clock.now is the time in seconds."""
+    from cogs import respect
+
+    class Clock:
+        now = 1_000_000.0
+
+    monkeypatch.setattr(respect.time, "time", lambda: Clock.now)
+    return Clock
+
+
+def thank(cog, giver, receiver):
+    message = thanks_message(giver, "thanks", [receiver])
+    asyncio.run(cog.on_message(message))
+    return message
+
+
+def test_thanking_the_same_person_twice_in_a_row_counts_twice(cog, clock):
     alice, bob = make_member(1), make_member(2)
-    asyncio.run(cog.on_message(thanks_message(alice, "thanks", [bob])))
-    asyncio.run(cog.on_message(thanks_message(alice, "thanks again", [bob])))
+    thank(cog, alice, bob)
+    clock.now += 60
+    thank(cog, alice, bob)
+    assert cog.store.points(1, 2) == 2
+
+
+def test_five_thanks_in_ten_minutes_pauses_the_sender_for_a_day(cog, clock):
+    alice, bob, carol = make_member(1, name="Alice"), make_member(2), make_member(3)
+    for _ in range(4):
+        thank(cog, alice, bob)
+        clock.now += 60
+    fifth = thank(cog, alice, bob)
+
+    assert cog.store.points(1, 2) == 4  # the 5th doesn't count
+    assert "**Alice** is sending thanks too fast" in fifth.channel.send.await_args.args[0]
+
+    clock.now += 60 * 60
+    thank(cog, alice, carol)  # paused for everyone, not just Bob
+    assert cog.store.points(1, 3) == 0
+
+    clock.now += 24 * 60 * 60
+    thank(cog, alice, carol)
+    assert cog.store.points(1, 3) == 1
+
+
+def test_thanks_spread_out_are_not_spam(cog, clock):
+    alice, bob = make_member(1), make_member(2)
+    for _ in range(6):  # every 3 minutes: never 5 inside 10 minutes
+        thank(cog, alice, bob)
+        clock.now += 3 * 60
+    assert cog.store.points(1, 2) == 6
+
+
+def test_one_person_gives_the_same_person_at_most_10_a_day(cog, clock):
+    alice, bob, carol = make_member(1), make_member(2), make_member(3)
+    for _ in range(12):
+        thank(cog, alice, bob)
+        clock.now += 3 * 60
+    assert cog.store.points(1, 2) == 10
+
+    thank(cog, alice, carol)  # other people still get Alice's thanks
+    assert cog.store.points(1, 3) == 1
+
+    clock.now += 24 * 60 * 60
+    thank(cog, alice, bob)
+    assert cog.store.points(1, 2) == 11
+
+
+def test_thanks_aimed_at_nobody_dont_count_toward_spam(cog, clock):
+    alice, bob = make_member(1), make_member(2)
+    for _ in range(10):
+        asyncio.run(cog.on_message(thanks_message(alice, "thanks everyone")))
+    thank(cog, alice, bob)
     assert cog.store.points(1, 2) == 1
 
 
