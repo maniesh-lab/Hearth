@@ -3,3 +3,7 @@ data/
 .env
 __pycache__/
 .git/
+tests/
+.github/
+.pytest_cache/
+.ruff_cache/

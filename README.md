@@ -1,71 +1,174 @@
 # Hearth
+
+[![CI](https://github.com/maniesh-lab/Hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/maniesh-lab/Hearth/actions/workflows/ci.yml)
+
 A Discord bot that handles the basics a server needs — onboarding, roles,
-moderation, and utility commands — plus one thing most bots at this scale
-don't have: an AI-powered FAQ system that actually understands what it's
+moderation, deadlines and utility commands — plus one thing most bots at this
+scale don't have: an AI-powered FAQ system that actually understands what it's
 answering, instead of matching keywords.
+
 Built to demonstrate backend and applied-AI skills together: `discord.py`
-for the bot layer, a hand-rolled retrieval pipeline (`sentence-transformers`
-+ plain `numpy` cosine similarity, no vector database) for the FAQ system,
-and Groq for fast, free-tier LLM inference — structured as independent cogs
-so any single feature can be reused or dropped into another bot.
+for the bot layer, a hand-rolled retrieval pipeline (Gemini embeddings + plain
+`numpy` cosine similarity, no vector database) for the FAQ, Groq for fast,
+free-tier answers, and SQLite for everything the bot needs to remember —
+structured as independent cogs so any single feature can be reused or dropped
+into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 
 ---
 ## Features
-- Welcome DM and server-join announcement when a new member joins
-- Self-serve role assignment — each server picks its own roles with `/roleadd`, then members use a reaction-role picker *or* the `/role` slash command; both toggle the same roles
-- Moderation basics — kick, ban, timeout-based mute, warnings, and an automated spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
-- Utility commands — server info, quick polls, timed reminders
-- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; points add up to six levels (Newbie → Legend), level-ups are announced, and `/leaderboard` shows the server's top 10
-- **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers are retrieved from that server's own content, not hardcoded or hallucinated
-- Per-server isolation — every server gets its own FAQ knowledge base, role list, role-picker message, warnings and spam counts, so the same bot can serve multiple clients' servers with completely separate content
-- Local embeddings (`sentence-transformers`) — no API cost for the retrieval step
-- Free-tier LLM inference via Groq — no paid API spend required to run or demo
-- Restart-safe — role lists, role-picker messages, FAQ knowledge bases and respect points persist across restarts and redeploys
-- Non-blocking AI calls — embeddings run in a background thread and the Groq call is async, so one `/ask` never freezes the bot for other servers
-- Containerized with Docker for consistent, portable deployment
+- **Welcome** — a DM plus a public welcome for new members; each server picks the channel, the message, and a role given automatically on join (like "Student")
+- **Self-serve roles** — each server picks its own roles with `/roleadd`; members use a reaction-role picker *or* the `/role` command
+- **Moderation** — kick, ban, timeout-based mute, warnings and an automatic spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
+- **Saved warnings and a mod log** — warnings survive restarts (`/warnings`, `/clearwarnings`), and every kick, ban, mute and warning can be recorded in a log channel
+- **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; survives restarts
+- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; points add up to six levels (Newbie → Legend), level-ups are announced, and `/leaderboard` shows the top 10
+- **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers come only from that server's own content
+- **Utility** — server info, quick polls, personal reminders
+- **Per-server isolation** — every server has its own settings, roles, FAQ, warnings, deadlines and respect points
+- **Restart-safe** — everything above (except `/remind`) is saved to disk
+- **Non-blocking** — embedding and LLM calls are async, so one `/ask` never freezes the bot for other servers
+- **Tested** — a pytest suite covering every feature, run with lint on every push by GitHub Actions
+- **Containerized** with Docker
+
 ---
 ## Project Structure
 ```
 hearth/
 │
 ├── cogs/
-│   ├── onboarding.py         # welcome DM + server-join announcement
+│   ├── onboarding.py         # welcome DM, public welcome, auto-role, /welcome settings
 │   ├── roles.py              # per-server role setup, reaction picker + /role
-│   ├── moderation.py         # kick/ban/mute/warn + spam filter
+│   ├── moderation.py         # kick/ban/mute/warn, saved warnings, mod log, spam filter
+│   ├── deadlines.py          # /deadline board + reminder loop
+│   ├── respect.py            # thank-you points, levels, leaderboard
 │   ├── utility.py            # serverinfo, poll, remind
-│   ├── respect.py            # thank-you points, levels, leaderboard (SQLite)
 │   └── faq.py                # /faqload + /ask — the RAG pipeline
 │
-├── data/                     # persisted role settings, FAQ knowledge bases, respect.db (gitignored)
+├── tests/                    # pytest suite, no Discord or API keys needed
+├── .github/workflows/ci.yml  # lint + tests on every push (Python 3.10–3.13)
+│
+├── data/                     # hearth.db, respect.db, role settings, FAQs (gitignored)
 │
 ├── main.py                   # bot entrypoint, intents, cog loader, error handler
+├── storage.py                # the SQLite database shared by the cogs
 ├── Dockerfile
-├── .dockerignore
 ├── .env.example
-├── .gitignore
-├── requirements.txt
+├── requirements.txt          # what the bot needs to run
+├── requirements-dev.txt      # + pytest and ruff for development
 └── README.md
 ```
+
 ---
-## Setting Up Roles
+## How to Run
+Requires Python 3.10 or newer.
 
-Each server chooses its own pickable roles — no code changes needed:
+**0. Create the bot on Discord (one time)**
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an application, open **Bot**, and copy its token
+2. On the same page, turn on **Server Members Intent** and **Message Content Intent** — Hearth won't start without them (welcomes need the first; the spam filter and respect points need the second)
+3. Invite it to your server with this link, putting your application's ID in place of `YOUR_APP_ID`:
+   ```
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=1099780148294
+   ```
+   That grants exactly what the commands use: View Channels, Send Messages, Embed Links, Read Message History, Add Reactions, Manage Roles, Kick Members, Ban Members and Moderate Members
+4. In **Server Settings → Roles**, drag Hearth's role above every role it should hand out or moderate — Discord won't let a bot act on roles above its own
 
+**1. Clone the repo**
+```bash
+git clone https://github.com/maniesh-lab/Hearth
+cd Hearth
+```
+**2. Create and activate a virtual environment**
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+**3. Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+**4. Set up environment variables**
+```bash
+cp .env.example .env
+```
+Fill in `.env` as `KEY=value`, with no spaces or quotes (so it works with both
+`python main.py` and `docker run --env-file`):
+
+| Variable | Needed for | Where to get it |
+|---|---|---|
+| `DISCORD_TOKEN` | Everything | Step 0 |
+| `GEMINI_API_KEY` | `/faqload`, `/ask` (embeddings) | Free at [aistudio.google.com](https://aistudio.google.com) |
+| `GROQ_API_KEY` | `/ask` (answers) | Free at [console.groq.com](https://console.groq.com) |
+| `HEARTH_TIMEZONE` | `/deadline` dates and times | Optional, default `Asia/Kathmandu` |
+
+Without the two AI keys the bot still runs; only the FAQ commands are unavailable.
+
+**5. Run the bot**
+```bash
+python main.py
+```
+
+**Or, with Docker:**
+```bash
+docker build -t hearth .
+docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
+```
+The `-v` part keeps the `data/` folder on your machine, so nothing is lost when
+the container is rebuilt. Slash commands can take a minute to appear after the
+first start.
+
+**Run the tests**
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+pytest
+```
+
+---
+## Setting It Up in Your Server
+Admin commands need **Manage Server** (welcome, mod log), **Manage Roles**
+(roles) or **Moderate Members** (warnings); Discord hides them from everyone else.
+
+**Welcome**
+- `/welcome channel #general` — where the public welcome goes (default: the server's system channel)
+- `/welcome message Hey {user}, welcome to {server}! You're member #{count}.` — `{user}`, `{server}` and `{count}` are filled in
+- `/welcome role @Student` — given to everyone who joins (run it with no role to turn it off)
+- `/welcome show` and `/welcome test` — check the setup, or preview it on yourself
+
+**Roles**
 1. `/roleadd emoji:🎨 role:@Artists` — repeat for each role (up to 20)
 2. `/rolesetup` — posts the picker message in the current channel
 
-Members then react to the picker or use `/role`. Admins can check the list
-with `/rolelist` and drop a role with `/roleremove`; run `/rolesetup` again to
-post an updated picker. Hearth refuses roles it can't safely hand out:
-`@everyone`, bot-managed roles, roles with Administrator permission, roles
-above Hearth's own role, and roles above the admin's own highest role.
+Members then react to the picker or use `/role`. `/rolelist` shows the list,
+`/roleremove` drops a role; run `/rolesetup` again to post an updated picker.
+Hearth refuses roles it can't safely hand out: `@everyone`, bot-managed roles,
+Administrator roles, and roles above Hearth's own or the admin's own.
+
+**Mod log**
+- `/modlog set #mod-log` — records every kick, ban, mute, warning, auto-mute and cleared warnings there
+- `/modlog off` — stops recording
+
+---
+## How the Deadline Board Works
+Anyone can add a deadline; the person who added it, or anyone with Manage
+Messages, can remove it.
+
+- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:17:00` and `channel:#assignments`
+- `/deadline list` — upcoming deadlines with their numbers
+- `/deadline remove number:3`
+
+The reminder is posted in the deadline's channel a day before: **24 hours before**
+if a time was given, otherwise **9:00 the day before** (a date-only deadline counts
+as due at the end of that day). Dates are read in `HEARTH_TIMEZONE`, and Discord
+shows every time in each member's own time zone. If the bot was offline when a
+reminder was due, it's sent as soon as the bot is back — unless the deadline
+itself has passed. Finished deadlines are cleaned up after a week; each server
+can have up to 50 upcoming.
 
 ---
 ## How Respect Points Work
-
-When a message says thanks (*thanks*, *thank you*, *ty*, *thx*…) and is aimed
-at someone — they're @mentioned, or it's a reply to their message — they get
-+1 respect. To keep it fair:
+When a message says thanks (*thanks*, *thank you*, *ty*, *thx*…) and is aimed at
+someone — they're @mentioned, or it's a reply to their message — they get +1
+respect. To keep it fair:
 
 - You can't thank yourself or a bot, and "no thanks" doesn't count
 - The same person can give the same person +1 only once an hour
@@ -82,114 +185,69 @@ Points add up to levels, and each new level is announced in the channel:
 | 500 | 5 — Veteran |
 | 1000 | 6 — Legend |
 
-Scores are kept per server in a small SQLite database (`data/respect.db`).
+`/respect` shows anyone's points, level and rank; `/leaderboard` shows the top 10.
 
 ---
 ## How It Works — The FAQ System
-1. **Loading** — an admin runs `/faqload` and attaches a `.txt`/`.md` file; the content is split into ~200-word chunks
-2. **Embedding** — each chunk is converted into a vector locally via `sentence-transformers` (`all-MiniLM-L6-v2`) — no API call, runs on CPU
-3. **Storage** — chunks and their vectors are saved to a small JSON file per server (`data/faq/{guild_id}.json`), so different servers' content never mixes
-4. **Retrieval** — when someone runs `/ask`, their question is embedded the same way, and a plain cosine-similarity check (no vector database needed at this scale) finds the 3 closest chunks
-5. **Generation** — those chunks are inserted into a prompt instructing the LLM to answer *only* from that context, then sent to Groq for a fast, grounded response
----
-## How to Run
-Requires Python 3.10 or newer.
+1. **Loading** — an admin runs `/faqload` and attaches a `.txt`/`.md` file (up to 1 MB); the content is split into ~200-word chunks
+2. **Embedding** — each chunk is turned into a 768-number vector by Google's Gemini embeddings API (`gemini-embedding-001`) — no AI model runs inside the bot, which keeps it small
+3. **Storage** — chunks and vectors are saved to a small JSON file per server (`data/faq/{guild_id}.json`), so different servers' content never mixes
+4. **Retrieval** — `/ask` embeds the question the same way, and a plain cosine-similarity check (no vector database needed at this scale) finds the 3 closest chunks
+5. **Generation** — those chunks go into a prompt telling the LLM to answer *only* from that context, sent to Groq for a fast, grounded answer
 
-**0. Create the bot on Discord (one time)**
-1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an application, open **Bot**, and copy its token
-2. On the same page, turn on **Server Members Intent** and **Message Content Intent** — Hearth won't start without them (welcome messages need the first; the spam filter and respect points need the second)
-3. Invite it to your server with this link, putting your application's ID in place of `YOUR_APP_ID`:
-   ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=1099780148294
-   ```
-   That grants exactly what the commands use: View Channels, Send Messages, Embed Links, Read Message History, Add Reactions, Manage Roles, Kick Members, Ban Members and Moderate Members
-4. In **Server Settings → Roles**, drag Hearth's role above every role it should hand out or moderate — Discord won't let a bot act on roles above its own
-
-**1. Clone the repo**
-```bash
-git clone https://github.com/maniesh-lab/hearth
-cd hearth
-```
-**2. Create and activate a virtual environment**
-```bash
-python -m venv venv
-source venv/bin/activate
-```
-**3. Install dependencies**
-```bash
-pip install -r requirements.txt
-```
-**4. Set up environment variables**
-```bash
-cp .env.example .env
-```
-Add your Discord bot token (step 0) and a free Groq API key (from [console.groq.com](https://console.groq.com)) to `.env` — written as `KEY=value`, with no spaces or quotes, so it works with both `python main.py` and `docker run --env-file`. Without a Groq key the bot still runs; only `/ask` is unavailable.
-
-**5. Run the bot**
-```bash
-python main.py
-```
-
-**Or, with Docker:**
-```bash
-docker build -t hearth .
-docker run --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
-```
-The `-v` part keeps the `data/` folder (roles, FAQs, respect points) on your machine, so nothing is lost when the container is rebuilt.
-
-Slash commands can take a minute to appear in Discord after the first start.
 ---
 ## Commands
 | Command | Description |
 |---|---|
 | `/ping` | Health check |
-| `/roleadd` | Add a pickable role with its emoji (admin only) |
-| `/roleremove` | Remove a pickable role (admin only) |
-| `/rolelist` | Show this server's pickable roles |
-| `/rolesetup` | Post the reaction-role picker (admin only) |
+| `/welcome channel` · `message` · `role` · `show` · `test` | Set up how new members are welcomed (admin) |
+| `/roleadd` · `/roleremove` · `/rolelist` · `/rolesetup` | Set up the pickable roles (admin) |
 | `/role` | Toggle one of the pickable roles on/off for yourself |
 | `/kick`, `/ban`, `/mute`, `/warn` | Moderation actions (permission-gated) |
-| `/serverinfo` | Show server stats |
-| `/respect` | Show your (or someone's) respect points, level and rank |
+| `/warnings` · `/clearwarnings` | See or clear a member's saved warnings (moderators) |
+| `/modlog set` · `off` | Record moderation actions in a channel (admin) |
+| `/deadline add` · `list` · `remove` | Shared deadlines with reminders a day before |
+| `/respect` | Show someone's respect points, level and rank |
 | `/leaderboard` | Top 10 most respected members in this server |
+| `/faqload` | Load a server's FAQ knowledge base from a file (admin) |
+| `/ask` | Ask a question, answered from that server's FAQ |
+| `/serverinfo` | Show server stats |
 | `/poll` | Post a quick 👍/👎 poll |
 | `/remind` | Get DM'd a reminder after N minutes (up to one week) |
-| `/faqload` | Load a server's FAQ knowledge base from a file (admin only) |
-| `/ask` | Ask a question, answered from that server's FAQ |
+
 ---
 ## Tech Stack
 | Tool | Purpose |
 |---|---|
-| `discord.py` | Bot framework, slash commands |
-| `sentence-transformers` | Local text embeddings |
+| `discord.py` | Bot framework, slash commands, background tasks |
+| `google-genai` | Gemini embeddings for the FAQ (free tier) |
+| `groq` | LLM answers for the FAQ (free tier) |
 | `numpy` | Cosine similarity search |
-| `sqlite3` | Respect points storage (built into Python) |
-| `groq` | LLM inference via Groq (free tier) |
+| `sqlite3` | Settings, warnings, deadlines, respect points (built into Python) |
 | `python-dotenv` | Environment variable loading |
-| `Docker` | Containerized, portable deployment |
+| `pytest` + `ruff` + GitHub Actions | Tests and lint on every push |
+| Docker | Containerized, portable deployment |
+
+---
+## Hosting for Free
+A Discord bot has to stay connected all the time, so hosts that "sleep" when
+idle don't work. Because Hearth needs only ~100 MB of RAM, it fits on a small
+always-on free server (for example Oracle Cloud's Always Free tier) or an old
+laptop or Raspberry Pi at home, using the Docker commands above.
+
 ---
 ## Use Case
 Built as a reference implementation for common Discord bot use cases —
-onboarding, community management, moderation, support — rather than a
-single-purpose bot. A server admin can drop Hearth into their own server and
-set it up with their own roles (`/roleadd`, `/rolesetup`) and FAQ content
-(`/faqload`) from inside Discord, no code changes required.
+onboarding, community management, moderation, study groups and support —
+rather than a single-purpose bot. A server admin can drop Hearth into their own
+server and set everything up from inside Discord, no code changes required.
 
 ---
-## Known Limitation
-The FAQ system retrieves a handful of relevant *chunks*, not the whole
-knowledge base at once. This makes it strong at specific factual questions
-but structurally unable to answer whole-document questions like "how many
-FAQ entries are there?" — no single chunk contains that answer. The bot is
-designed to say it doesn't have that information rather than guess.
+## Known Limitations
+- The FAQ retrieves a handful of relevant *chunks*, not the whole knowledge base at once. That makes it strong at specific factual questions but unable to answer whole-document questions like "how many FAQ entries are there?" — the bot says it doesn't have that information rather than guess.
+- `/remind` reminders are held in memory, so one still waiting when the bot restarts is lost (`/deadline` reminders are saved).
+- FAQs loaded before the switch to Gemini embeddings need to be loaded again with `/faqload`; the bot says so when someone asks.
 
----
-## Notes
-- Each server's FAQ content, role setup and respect points are fully isolated — one server's setup never affects another's
-- No vector database — cosine similarity over plain `numpy` arrays is sufficient at this scale and avoids unnecessary dependency weight
-- Spam filter and warnings are kept per server, in memory; moderation history does not currently persist across restarts
-- Reminders are held in memory too — a reminder still waiting when the bot restarts is lost
-- Servers set up with an older version of Hearth (hardcoded Creative/Gaming/Dev roles) are carried over automatically the first time they're used
 ---
 ## Author
 **Manish Pandeya** · [github.com/maniesh-lab](https://github.com/maniesh-lab)
