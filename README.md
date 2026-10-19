@@ -33,7 +33,7 @@ into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 ---
 ## Project Structure
 ```
-hearth/
+Hearth/
 │
 ├── cogs/
 │   ├── onboarding.py         # welcome DM, public welcome, auto-role, /welcome settings
