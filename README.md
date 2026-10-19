@@ -52,11 +52,14 @@ hearth/
 ├── main.py                   # bot entrypoint, intents, cog loader, error handler
 ├── storage.py                # the SQLite database shared by the cogs
 ├── Dockerfile
+├── .dockerignore
 ├── .env.example
+├── .gitignore
 ├── requirements.txt          # what the bot needs to run
 ├── requirements-dev.txt      # + pytest and ruff for development
 ├── pytest.ini                # tells pytest where the tests are
 ├── ruff.toml                 # lint rules: catches real bugs, not style
+├── LICENSE
 └── README.md
 ```
 
