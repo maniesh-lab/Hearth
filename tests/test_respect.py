@@ -79,11 +79,33 @@ def thank(cog, giver, receiver):
 
 
 def test_thanking_the_same_person_twice_in_a_row_counts_twice(cog, clock):
-    alice, bob = make_member(1), make_member(2)
+    alice, bob = make_member(1), make_member(2, name="Bob")
     thank(cog, alice, bob)
     clock.now += 60
-    thank(cog, alice, bob)
+    second = thank(cog, alice, bob)
     assert cog.store.points(1, 2) == 2
+    assert second.channel.send.await_args.args[0] == "🌱 +1 respect for **Bob** · 2 total"
+
+
+def test_one_message_thanking_two_people_gets_one_reply_with_both(cog, clock):
+    alice, bob, carol = make_member(1), make_member(2, name="Bob"), make_member(3, name="Carol")
+    give_points(cog, 2, 5)
+    message = thanks_message(alice, "thanks both", [bob, carol])
+    asyncio.run(cog.on_message(message))
+
+    message.channel.send.assert_awaited_once()
+    lines = message.channel.send.await_args.args[0].split("\n")
+    assert lines[0] == "🌱 +1 respect for **Bob** · 6 total"
+    assert lines[1].startswith("🎉 <@3> reached **Level 1 — 🌱 Newbie**")
+
+
+def test_daily_limit_is_silent(cog, clock):
+    alice, bob = make_member(1), make_member(2)
+    for _ in range(10):
+        thank(cog, alice, bob)
+        clock.now += 3 * 60
+    eleventh = thank(cog, alice, bob)
+    eleventh.channel.send.assert_not_awaited()
 
 
 def test_five_thanks_in_ten_minutes_pauses_the_sender_for_a_day(cog, clock):

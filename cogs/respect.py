@@ -11,7 +11,8 @@ Normal thank-yous always count, even several in a row. Two rules stop abuse:
   for 24 hours (the 5th doesn't count), and Hearth says so in the channel
 - Farming: one person can give the same person at most 10 points a day
 
-Points add up to levels. Reaching a new level is announced in the channel.
+Every +1 gets a short note in the channel ("🌱 +1 respect for **Kai** · 12 total"),
+and reaching a new level gets a bigger announcement instead. Points add up to levels.
 
 Optional level roles (/levelroles on|off): Hearth creates one role per level
 ("Helper (25+ respect)"), shown separately in the member list, and swaps a
@@ -95,6 +96,12 @@ def level_label(number, name):
     """e.g. "🤝 Helper" — the emoji and name shown in every message."""
     emoji = level_emoji(number)
     return f"{emoji} {name}" if emoji else name
+
+
+def respect_line(name, total):
+    """The short note for a +1 that isn't a level-up, e.g.
+    "🌱 +1 respect for **Kai** · 12 total". The emoji is their current level's."""
+    return f"{level_emoji(level_for(total)[0])} +1 respect for **{name}** · {total} total"
 
 
 def level_role_name(number, with_emoji):
@@ -319,6 +326,7 @@ class Respect(commands.Cog):
                 pass
             return
 
+        lines = []  # one short line per person, sent together as one message
         for person in people:
             if self.store.given_today(guild_id, giver.id, person.id, now) >= DAILY_LIMIT_PER_PAIR:
                 continue
@@ -327,19 +335,23 @@ class Respect(commands.Cog):
             total = self.store.give(guild_id, giver.id, person.id, now)
             after, name = level_for(total)
 
-            if after > before and self.roles_on(guild_id):
-                member = message.guild.get_member(person.id)
-                if member is not None:
-                    await self._set_level_role(member, after, self._level_roles(message.guild))
-
             if after > before:
-                try:
-                    await message.channel.send(
-                        f"🎉 {person.mention} reached **Level {after} — {level_label(after, name)}** "
-                        f"({total} respect)!"
-                    )
-                except discord.HTTPException:
-                    pass  # e.g. the bot can't post in this channel
+                if self.roles_on(guild_id):
+                    member = message.guild.get_member(person.id)
+                    if member is not None:
+                        await self._set_level_role(member, after, self._level_roles(message.guild))
+                lines.append(
+                    f"🎉 {person.mention} reached **Level {after} — {level_label(after, name)}** "
+                    f"({total} respect)!"
+                )
+            else:
+                lines.append(respect_line(person.display_name, total))
+
+        if lines:
+            try:
+                await message.channel.send("\n".join(lines))
+            except discord.HTTPException:
+                pass  # e.g. the bot can't post in this channel
 
     @app_commands.command(name="respect", description="Show someone's respect points and level")
     @app_commands.describe(member="Who to check (leave empty for yourself)")

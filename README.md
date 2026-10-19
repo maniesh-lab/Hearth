@@ -21,7 +21,7 @@ into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 - **Moderation** — kick, ban, timeout-based mute, warnings and an automatic spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
 - **Saved warnings and a mod log** — warnings survive restarts (`/warnings`, `/clearwarnings`), and every kick, ban, mute and warning can be recorded in a log channel
 - **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; survives restarts
-- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; points add up to six levels (Newbie → Legend), level-ups are announced, `/leaderboard` shows the top 10, and optional level roles show each member's level in the member list
+- **Respect points** — saying thanks to someone (@mention or reply) gives them +1; each +1 gets a short note in chat, points add up to six levels (Newbie → Legend), level-ups are announced, `/leaderboard` shows the top 10, and optional level roles show each member's level in the member list
 - **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers come only from that server's own content
 - **Utility** — server info, quick polls, personal reminders
 - **Per-server isolation** — every server has its own settings, roles, FAQ, warnings, deadlines and respect points
@@ -181,7 +181,10 @@ respect. Normal thank-yous always count, even several in a row. To keep it fair:
 - **Farming:** one person can give the same person at most 10 points a day
 - One message counts for at most 5 people
 
-Points add up to levels, and each new level is announced in the channel:
+Every +1 gets a short note in the channel, like `🌱 +1 respect for Kai · 12 total`
+(the emoji is their current level). Reaching a new level gets a bigger
+announcement instead. Thanking several people in one message gets one reply
+with a line for each. Points add up to these levels:
 
 | Respect | Level |
 |---|---|
