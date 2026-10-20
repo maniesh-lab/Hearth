@@ -84,7 +84,7 @@ def test_thanking_the_same_person_twice_in_a_row_counts_twice(cog, clock):
     clock.now += 60
     second = thank(cog, alice, bob)
     assert cog.store.points(1, 2) == 2
-    assert second.channel.send.await_args.args[0] == "🌱 +1 respect for **Bob** · 2 total"
+    assert second.channel.send.await_args.args[0] == "**+1** respect for **Bob** · total: **2**"
 
 
 def test_one_message_thanking_two_people_gets_one_reply_with_both(cog, clock):
@@ -95,7 +95,7 @@ def test_one_message_thanking_two_people_gets_one_reply_with_both(cog, clock):
 
     message.channel.send.assert_awaited_once()
     lines = message.channel.send.await_args.args[0].split("\n")
-    assert lines[0] == "🌱 +1 respect for **Bob** · 6 total"
+    assert lines[0] == "**+1** respect for **Bob** · total: **6**"
     assert lines[1].startswith("🎉 <@3> reached **Level 1 — 🌱 Newbie**")
 
 

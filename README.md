@@ -181,9 +181,8 @@ respect. Normal thank-yous always count, even several in a row. To keep it fair:
 - **Farming:** one person can give the same person at most 10 points a day
 - One message counts for at most 5 people
 
-Every +1 gets a short note in the channel, like `🌱 +1 respect for Kai · 12 total`
-(the emoji is their current level). Reaching a new level gets a bigger
-announcement instead. Thanking several people in one message gets one reply
+Every +1 gets a short note in the channel, like **+1** respect for **Kai** · total: **12**.
+Reaching a new level gets a bigger announcement instead, with the level's emoji. Thanking several people in one message gets one reply
 with a line for each. Points add up to these levels:
 
 | Respect | Level |

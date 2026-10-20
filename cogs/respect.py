@@ -11,7 +11,7 @@ Normal thank-yous always count, even several in a row. Two rules stop abuse:
   for 24 hours (the 5th doesn't count), and Hearth says so in the channel
 - Farming: one person can give the same person at most 10 points a day
 
-Every +1 gets a short note in the channel ("🌱 +1 respect for **Kai** · 12 total"),
+Every +1 gets a short note in the channel ("**+1** respect for **Kai** · total: **12**"),
 and reaching a new level gets a bigger announcement instead. Points add up to levels.
 
 Optional level roles (/levelroles on|off): Hearth creates one role per level
@@ -100,8 +100,9 @@ def level_label(number, name):
 
 def respect_line(name, total):
     """The short note for a +1 that isn't a level-up, e.g.
-    "🌱 +1 respect for **Kai** · 12 total". The emoji is their current level's."""
-    return f"{level_emoji(level_for(total)[0])} +1 respect for **{name}** · {total} total"
+    "**+1** respect for **Kai** · total: **12**". No emoji: those are saved
+    for level-ups, so they stand out."""
+    return f"**+1** respect for **{name}** · total: **{total}**"
 
 
 def level_role_name(number, with_emoji):
