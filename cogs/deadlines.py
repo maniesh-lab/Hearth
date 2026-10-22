@@ -1,5 +1,17 @@
 """
-Deadline board: /deadline add "Maths assignment" 2026-10-25 [time] [channel]
+Deadline board.
+- /deadlines — everyone: upcoming deadlines, soonest first, numbered #1, #2, #3…
+- /deadline add "Maths assignment" 2026-10-25 [time] [channel]
+- /deadline remove — pick the deadline from a dropdown (or type its number)
+
+The numbers are positions in the list, worked out fresh each time: the soonest
+deadline is always #1, and when it passes the next one becomes #1. Each server
+has its own list, so every server starts at #1.
+
+/deadline add and /deadline remove are hidden from regular members by default
+(they need Manage Messages). An admin can let a role or a person use them in
+Server Settings → Integrations → Hearth → /deadline, while /deadlines stays
+open to everyone.
 
 The bot posts a reminder in the deadline's channel a day before it's due:
 - with a time: 24 hours before
@@ -115,9 +127,57 @@ class Deadlines(commands.Cog):
         self.db.commit()
         return sent
 
+    # --- the list, in order ---
+
+    def upcoming(self, guild_id, now=None):
+        """This server's upcoming deadlines, soonest first. A deadline's number
+        is its position here (index + 1)."""
+        return self.db.execute(
+            "SELECT id, title, due_at FROM deadlines WHERE guild_id = ? AND due_at > ? ORDER BY due_at, id",
+            (guild_id, now if now is not None else time.time()),
+        ).fetchall()
+
+    def find(self, guild_id, choice):
+        """Turn what was picked or typed in /deadline remove into a deadline row.
+        "id:12" comes from the dropdown (exact, even if the list has changed);
+        "3" means #3 in the list right now."""
+        choice = (choice or "").strip().lstrip("#")
+        rows = self.upcoming(guild_id)
+        if choice.startswith("id:") and choice[3:].isdigit():
+            wanted = int(choice[3:])
+            for position, row in enumerate(rows, start=1):
+                if row["id"] == wanted:
+                    return position, row
+            return None, None
+        if choice.isdigit() and 1 <= int(choice) <= len(rows):
+            return int(choice), rows[int(choice) - 1]
+        return None, None
+
     # --- commands ---
 
-    deadline = app_commands.Group(name="deadline", description="Shared deadlines with automatic reminders", guild_only=True)
+    @app_commands.command(name="deadlines", description="Upcoming deadlines in this server, soonest first")
+    @app_commands.guild_only()
+    async def list_deadlines(self, interaction: discord.Interaction):
+        rows = self.upcoming(interaction.guild.id)[:15]
+        if not rows:
+            await interaction.response.send_message("No upcoming deadlines.")
+            return
+
+        lines = [
+            f"**#{position}** {r['title']} — <t:{int(r['due_at'])}:f> (<t:{int(r['due_at'])}:R>)"
+            for position, r in enumerate(rows, start=1)
+        ]
+        embed = discord.Embed(title="📅 Upcoming deadlines", description="\n".join(lines), color=discord.Color.dark_teal())
+        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+    deadline = app_commands.Group(
+        name="deadline",
+        description="Add or remove deadlines (an admin chooses who can)",
+        guild_only=True,
+        # Hidden from regular members until an admin allows a role or person in
+        # Server Settings → Integrations → Hearth → /deadline.
+        default_permissions=discord.Permissions(manage_messages=True),
+    )
 
     @deadline.command(name="add", description="Add a deadline; the bot reminds this channel a day before")
     @app_commands.describe(
@@ -160,51 +220,55 @@ class Deadlines(commands.Cog):
             (interaction.guild.id, target.id, title.strip(), due_at, remind_at, interaction.user.id),
         )
         self.db.commit()
+        position = next(
+            (i for i, r in enumerate(self.upcoming(interaction.guild.id, now), start=1) if r["id"] == cursor.lastrowid),
+            None,
+        )
 
         due = int(due_at)
         note = "" if remind_at > now else " It's due within a day, so there won't be a separate reminder."
         await interaction.response.send_message(
-            f"📌 Added **#{cursor.lastrowid} {title.strip()}** — due <t:{due}:F> (<t:{due}:R>). "
+            f"📌 Added **#{position} {title.strip()}** — due <t:{due}:F> (<t:{due}:R>). "
             f"I'll remind {target.mention} a day before.{note}",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @deadline.command(name="list", description="Show upcoming deadlines in this server")
-    async def list_deadlines(self, interaction: discord.Interaction):
-        rows = self.db.execute(
-            "SELECT id, title, due_at FROM deadlines WHERE guild_id = ? AND due_at > ? ORDER BY due_at LIMIT 15",
-            (interaction.guild.id, time.time()),
-        ).fetchall()
-        if not rows:
-            await interaction.response.send_message("No upcoming deadlines. Add one with `/deadline add`.")
-            return
-
-        lines = [f"**#{r['id']}** {r['title']} — <t:{int(r['due_at'])}:f> (<t:{int(r['due_at'])}:R>)" for r in rows]
-        embed = discord.Embed(title="📅 Upcoming deadlines", description="\n".join(lines), color=discord.Color.dark_teal())
-        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-
-    @deadline.command(name="remove", description="Remove a deadline by its number (yours, or any if you can manage messages)")
-    @app_commands.describe(number="The deadline's number from /deadline list")
-    async def remove(self, interaction: discord.Interaction, number: int):
-        row = self.db.execute(
-            "SELECT id, title, created_by FROM deadlines WHERE id = ? AND guild_id = ?", (number, interaction.guild.id)
-        ).fetchone()
+    @deadline.command(name="remove", description="Remove a deadline — pick it from the list")
+    @app_commands.describe(deadline="Start typing to pick one, or type its number from /deadlines")
+    async def remove(self, interaction: discord.Interaction, deadline: str):
+        position, row = self.find(interaction.guild.id, deadline)
         if row is None:
-            await interaction.response.send_message(f"There's no deadline #{number} in this server.", ephemeral=True)
-            return
-
-        can_manage = interaction.user.guild_permissions.manage_messages
-        if row["created_by"] != interaction.user.id and not can_manage:
             await interaction.response.send_message(
-                "Only the person who added it, or someone with Manage Messages, can remove it.", ephemeral=True
+                "I couldn't find that deadline — pick one from the list, or check `/deadlines`.", ephemeral=True
             )
             return
 
-        self.db.execute("DELETE FROM deadlines WHERE id = ?", (number,))
+        self.db.execute("DELETE FROM deadlines WHERE id = ?", (row["id"],))
         self.db.commit()
         await interaction.response.send_message(
-            f"Removed **#{number} {row['title']}**.", allowed_mentions=discord.AllowedMentions.none()
+            f"Removed **#{position} {row['title']}**.", allowed_mentions=discord.AllowedMentions.none()
         )
+
+    @remove.autocomplete("deadline")
+    async def remove_choices(self, interaction: discord.Interaction, typed: str):
+        """The dropdown: each upcoming deadline as "#2 Eng assignment — Mon 2 Nov".
+        The value is the deadline's ID, so the right one is removed even if the
+        numbers shift before the command is sent."""
+        tz = server_timezone()
+        typed = typed.lower().strip()
+        choices = []
+        for position, row in enumerate(self.upcoming(interaction.guild.id), start=1):
+            day = datetime.fromtimestamp(row["due_at"], tz)
+            when = f"{day:%a} {day.day} {day:%b, %H:%M}"
+            title = row["title"]
+            room = 100 - len(f"#{position}  — {when}")  # Discord's limit for a dropdown entry is 100
+            if len(title) > room:
+                title = title[: room - 1] + "…"
+            label = f"#{position} {title} — {when}"
+            if typed and typed not in label.lower():
+                continue
+            choices.append(app_commands.Choice(name=label, value=f"id:{row['id']}"))
+        return choices[:25]  # Discord shows at most 25
 
 
 async def setup(bot):

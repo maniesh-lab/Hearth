@@ -59,13 +59,40 @@ def future_date(days):
     return (datetime.now(KTM) + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def test_add_and_list(cog):
-    interaction = add(cog, make_member(1), "Maths assignment", future_date(5))
-    assert "Added **#1 Maths assignment**" in reply_text(interaction)
+def listing_text(cog, guild=None):
+    interaction = make_interaction(make_member(1), guild or make_guild())
+    asyncio.run(cog.list_deadlines.callback(cog, interaction))
+    call = interaction.response.send_message.await_args
+    return call.kwargs["embed"].description if "embed" in call.kwargs else call.args[0]
 
-    listing = make_interaction(make_member(1), make_guild())
-    asyncio.run(cog.list_deadlines.callback(cog, listing))
-    assert "Maths assignment" in listing.response.send_message.await_args.kwargs["embed"].description
+
+def test_numbers_are_positions_soonest_first(cog):
+    add(cog, make_member(1), "Later essay", future_date(10))
+    reply = reply_text(add(cog, make_member(1), "Sooner quiz", future_date(3)))
+    assert "Added **#1 Sooner quiz**" in reply  # added second, but it's due first
+
+    lines = listing_text(cog).split("\n")
+    assert lines[0].startswith("**#1** Sooner quiz")
+    assert lines[1].startswith("**#2** Later essay")
+
+
+def test_when_number_1_passes_number_2_moves_up(cog):
+    add(cog, make_member(1), "Quiz", "2099-06-10")
+    add(cog, make_member(1), "Essay", "2099-06-20")
+    quiz_due, _ = parse_deadline("2099-06-10", tz=KTM)
+    rows = cog.upcoming(1, now=quiz_due + 60)
+    assert [r["title"] for r in rows] == ["Essay"]  # Essay is #1 now
+
+
+def test_each_server_starts_at_1(cog):
+    add(cog, make_member(1), "Class quiz", future_date(3), guild=make_guild(guild_id=1))
+    reply = reply_text(add(cog, make_member(1), "Club meetup", future_date(5), guild=make_guild(guild_id=2)))
+    assert "Added **#1 Club meetup**" in reply
+    assert "Class quiz" not in listing_text(cog, make_guild(guild_id=2))
+
+
+def test_empty_list(cog):
+    assert listing_text(cog) == "No upcoming deadlines."
 
 
 def test_past_date_is_refused(cog):
@@ -90,20 +117,57 @@ def test_no_reminder_if_the_bot_was_offline_past_the_deadline(cog):
     cog.channel.send.assert_not_awaited()
 
 
-def test_only_creator_or_moderator_can_remove(cog):
-    add(cog, make_member(1), "Quiz", future_date(3))
+def choices(cog, typed=""):
+    interaction = make_interaction(make_member(1), make_guild())
+    return asyncio.run(cog.remove_choices(interaction, typed))
 
-    stranger = make_member(2)
-    stranger.guild_permissions.manage_messages = False
-    interaction = make_interaction(stranger, make_guild())
-    asyncio.run(cog.remove.callback(cog, interaction, 1))
-    assert "Only the person who added it" in reply_text(interaction)
 
-    creator = make_member(1)
-    creator.guild_permissions.manage_messages = False
-    interaction = make_interaction(creator, make_guild())
-    asyncio.run(cog.remove.callback(cog, interaction, 1))
-    assert "Removed **#1 Quiz**" in reply_text(interaction)
+def remove(cog, value):
+    interaction = make_interaction(make_member(1), make_guild())
+    asyncio.run(cog.remove.callback(cog, interaction, value))
+    return reply_text(interaction)
+
+
+def test_dropdown_shows_number_title_and_date(cog):
+    add(cog, make_member(1), "Eng assignment", "2099-11-02")
+    add(cog, make_member(1), "Maths quiz", "2099-11-06", "10:00")
+    names = [c.name for c in choices(cog)]
+    assert names == ["#1 Eng assignment — Mon 2 Nov, 23:59", "#2 Maths quiz — Fri 6 Nov, 10:00"]
+    assert [c.name for c in choices(cog, "maths")] == ["#2 Maths quiz — Fri 6 Nov, 10:00"]
+
+
+def test_dropdown_removes_the_picked_one_even_if_numbers_shift(cog):
+    add(cog, make_member(1), "Essay", "2099-11-20")
+    picked = choices(cog)[0].value  # Essay, shown as #1
+
+    add(cog, make_member(1), "Quiz", "2099-11-10")  # now Quiz is #1 and Essay is #2
+    assert remove(cog, picked) == "Removed **#2 Essay**."
+    assert [r["title"] for r in cog.upcoming(1)] == ["Quiz"]
+
+
+def test_typed_number_means_that_position_now(cog):
+    add(cog, make_member(1), "Essay", "2099-11-20")
+    add(cog, make_member(1), "Quiz", "2099-11-10")
+    assert remove(cog, "#2") == "Removed **#2 Essay**."
+
+
+@pytest.mark.parametrize("value", ["7", "id:999", "hello", ""])
+def test_unknown_deadline(cog, value):
+    add(cog, make_member(1), "Quiz", "2099-11-10")
+    assert "couldn't find that deadline" in remove(cog, value)
+
+
+def test_a_deadline_from_another_server_cant_be_removed(cog):
+    add(cog, make_member(1), "Club meetup", "2099-11-10", guild=make_guild(guild_id=2))
+    club_id = cog.upcoming(2)[0]["id"]
+    assert "couldn't find" in remove(cog, f"id:{club_id}")  # remove() runs in server 1
+
+
+def test_who_can_add_and_remove_is_up_to_the_admin(cog):
+    # /deadline add|remove start hidden behind Manage Messages; the admin can
+    # allow roles in Server Settings. /deadlines has no such limit.
+    assert cog.deadline.default_permissions.manage_messages is True
+    assert cog.list_deadlines.default_permissions is None
 
 
 def test_server_limit(cog, monkeypatch):
