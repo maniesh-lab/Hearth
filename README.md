@@ -20,7 +20,7 @@ into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 - **Self-serve roles** — each server picks its own roles with `/roleadd`; members use a reaction-role picker *or* the `/role` command
 - **Moderation** — kick, ban, timeout-based mute, warnings and an automatic spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
 - **Saved warnings and a mod log** — warnings survive restarts (`/warnings`, `/clearwarnings`), and every kick, ban, mute and warning can be recorded in a log channel
-- **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; survives restarts
+- **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; everyone sees the list with `/deadlines`, soonest first; survives restarts
 - **Respect points** — saying thanks to someone (@mention or reply) gives them +1; each +1 gets a short note in chat, points add up to six levels (Newbie → Legend), level-ups are announced, `/leaderboard` shows the top 10, and optional level roles show each member's level in the member list
 - **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers come only from that server's own content
 - **Utility** — server info, quick polls, personal reminders
@@ -39,7 +39,7 @@ Hearth/
 │   ├── onboarding.py         # welcome DM, public welcome, auto-role, /welcome settings
 │   ├── roles.py              # per-server role setup, reaction picker + /role
 │   ├── moderation.py         # kick/ban/mute/warn, saved warnings, mod log, spam filter
-│   ├── deadlines.py          # /deadline board + reminder loop
+│   ├── deadlines.py          # /deadlines list, /deadline add + remove, reminder loop
 │   ├── respect.py            # thank-you points, levels, leaderboard, level roles
 │   ├── utility.py            # serverinfo, poll, remind
 │   └── faq.py                # /faqload + /ask — the RAG pipeline
@@ -131,7 +131,9 @@ pytest
 ---
 ## Setting It Up in Your Server
 Admin commands need **Manage Server** (welcome, mod log), **Manage Roles**
-(roles, level roles) or **Moderate Members** (warnings); Discord hides them from everyone else.
+(roles, level roles), **Manage Messages** (adding and removing deadlines) or
+**Moderate Members** (warnings); Discord hides them from everyone else. Any of
+them can be opened to other roles or people in **Server Settings → Integrations → Hearth**.
 
 **Welcome**
 - `/welcome channel #general` — where the public welcome goes (default: the server's system channel)
@@ -154,12 +156,19 @@ Administrator roles, and roles above Hearth's own or the admin's own.
 
 ---
 ## How the Deadline Board Works
-Anyone can add a deadline; the person who added it, or anyone with Manage
-Messages, can remove it.
-
+- `/deadlines` — **everyone**: upcoming deadlines, soonest first
 - `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:17:00` and `channel:#assignments`
-- `/deadline list` — upcoming deadlines with their numbers
-- `/deadline remove number:3`
+- `/deadline remove` — start typing and pick the deadline from the dropdown (or type its number)
+
+**Numbers are positions in the list.** The soonest deadline is always **#1**, the
+next is #2, and so on. When #1 passes, #2 becomes #1. Each server has its own list,
+so every server starts at #1. Picking from the `/deadline remove` dropdown removes
+exactly that deadline, even if the numbers moved in the meantime.
+
+**Who can add and remove.** `/deadline add` and `/deadline remove` start hidden
+from regular members (they need Manage Messages). To let a role (like "CR") or a
+specific person use them, go to **Server Settings → Integrations → Hearth →
+`/deadline`** and allow them there. `/deadlines` stays open to everyone.
 
 The reminder is posted in the deadline's channel a day before: **24 hours before**
 if a time was given, otherwise **9:00 the day before** (a date-only deadline counts
@@ -234,7 +243,8 @@ member the role for their current level. From then on:
 | `/kick`, `/ban`, `/mute`, `/warn` | Moderation actions (permission-gated) |
 | `/warnings` · `/clearwarnings` | See or clear a member's saved warnings (moderators) |
 | `/modlog set` · `off` | Record moderation actions in a channel (admin) |
-| `/deadline add` · `list` · `remove` | Shared deadlines with reminders a day before |
+| `/deadlines` | Upcoming deadlines, soonest first (everyone) |
+| `/deadline add` · `remove` | Add or remove deadlines; reminded a day before (roles an admin allows) |
 | `/respect` | Show someone's respect points, level and rank |
 | `/leaderboard` | Top 10 most respected members in this server |
 | `/levelroles on` · `off` | Give members a role for their respect level (admin) |
@@ -284,7 +294,6 @@ server and set everything up from inside Discord, no code changes required.
 ## Known Limitations
 - The FAQ retrieves a handful of relevant *chunks*, not the whole knowledge base at once. That makes it strong at specific factual questions but unable to answer whole-document questions like "how many FAQ entries are there?" — the bot says it doesn't have that information rather than guess.
 - `/remind` reminders are held in memory, so one still waiting when the bot restarts is lost (`/deadline` reminders are saved).
-- FAQs loaded before the switch to Gemini embeddings need to be loaded again with `/faqload`; the bot says so when someone asks.
 
 ---
 ## Author
