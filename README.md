@@ -17,7 +17,7 @@ into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 ---
 ## Features
 - **Welcome** — a DM plus a public welcome for new members; each server picks the channel, the message, and a role given automatically on join (like "Student")
-- **Self-serve roles** — each server picks its own roles with `/roleadd`; members use a reaction-role picker *or* the `/role` command
+- **Self-serve roles** — each server picks its own roles with `/roleadd` (several at once); members use a reaction-role picker that keeps itself up to date, *or* the `/role` command
 - **Moderation** — kick, ban, timeout-based mute, warnings and an automatic spam filter, with role-hierarchy checks so a moderator can't act on someone ranked above them
 - **Saved warnings and a mod log** — warnings survive restarts (`/warnings`, `/clearwarnings`), and every kick, ban, mute and warning can be recorded in a log channel
 - **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; everyone sees the list with `/deadlines`, soonest first; survives restarts
@@ -37,7 +37,7 @@ Hearth/
 │
 ├── cogs/
 │   ├── onboarding.py         # welcome DM, public welcome, auto-role, /welcome settings
-│   ├── roles.py              # per-server role setup, reaction picker + /role
+│   ├── roles.py              # per-server role setup, self-updating reaction picker + /role
 │   ├── moderation.py         # kick/ban/mute/warn, saved warnings, mod log, spam filter
 │   ├── deadlines.py          # /deadlines list, /deadline add + remove, reminder loop
 │   ├── respect.py            # thank-you points, levels, leaderboard, level roles
@@ -142,11 +142,14 @@ them can be opened to other roles or people in **Server Settings → Integration
 - `/welcome show` and `/welcome test` — check the setup, or preview it on yourself
 
 **Roles**
-1. `/roleadd emoji:🎨 role:@Artists` — repeat for each role (up to 20)
-2. `/rolesetup` — posts the picker message in the current channel
+1. `/roleadd roles:🎮 @Gamer 🎨 @Artist 💻 @Coder` — emoji then role, as many pairs as you like (up to 20 roles)
+2. `/rolesetup` — run once in your roles channel to post the picker
 
-Members then react to the picker or use `/role`. `/rolelist` shows the list,
-`/roleremove` drops a role; run `/rolesetup` again to post an updated picker.
+Members then react to the picker or use `/role`. After that, `/roleadd` and
+`/roleremove` **update the posted picker by themselves** (its text and its
+reactions), so there's nothing else to run. To change a role's emoji, just
+`/roleadd` it again with the new emoji and it moves. `/rolelist` shows the list.
+Running `/rolesetup` again posts a fresh picker and removes the old one.
 Hearth refuses roles it can't safely hand out: `@everyone`, bot-managed roles,
 Administrator roles, and roles above Hearth's own or the admin's own.
 
