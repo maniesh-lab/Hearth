@@ -4,10 +4,16 @@ Self-serve roles: a reaction-role picker message plus a /role command.
 Each server sets up its own list of roles with /roleadd and /roleremove,
 so no code changes are needed to use Hearth in a new server.
 
+- /roleadd takes one or several pairs at once: "🎮 @Gamer 🎨 @Artist".
+  Adding a role that's already on the list with a new emoji moves it.
+- /rolesetup posts the picker once. After that, /roleadd and /roleremove
+  update that same message (text and reactions) by themselves.
+
 Saved per server in data/roles.json:
     {
       "<guild_id>": {
         "message_id": 123,                 # the picker message, or null
+        "channel_id": 321,                 # where it is, so it can be edited
         "roles": {"🎨": 456, "🎮": 789}    # emoji -> role ID
       }
     }
@@ -15,6 +21,7 @@ Role IDs are stored instead of names, so renaming a role doesn't break it.
 """
 
 import json
+import re
 from pathlib import Path
 
 import discord
@@ -39,6 +46,42 @@ def _read_json(path):
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+# Pieces of a /roleadd line: a role mention <@&123>, a custom emoji <:name:123>,
+# or any other word (a normal emoji, or @RoleName typed without picking it).
+TOKEN_RE = re.compile(r"<@&\d+>|<a?:\w+:\d+>|@[^\s<]+|[^\s<@]+")
+
+
+def find_role(guild, text):
+    """A role from "<@&123>" or "@Name" / "Name" (if exactly one role has that name)."""
+    mention = re.fullmatch(r"<@&(\d+)>", text)
+    if mention:
+        return guild.get_role(int(mention.group(1)))
+    name = text.lstrip("@").lower()
+    matches = [r for r in guild.roles if r.name.lower() == name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def parse_role_pairs(text, guild):
+    """Turn "🎮 @Gamer 🎨 @Artist" into ([(emoji, role), ...], [problems])."""
+    tokens = TOKEN_RE.findall(text)
+    pairs, problems = [], []
+    if not tokens:
+        return pairs, ["Write an emoji and a role, e.g. `🎮 @Gamer 🎨 @Artist`."]
+    if len(tokens) % 2:
+        problems.append(f"`{tokens[-1]}` has nothing to pair with — write emoji, role, emoji, role…")
+        tokens = tokens[:-1]
+    for emoji_text, role_text in zip(tokens[::2], tokens[1::2]):
+        emoji = normalize_emoji(emoji_text)
+        role = find_role(guild, role_text)
+        if emoji is None:
+            problems.append(f"`{emoji_text}` isn't an emoji.")
+        elif role is None:
+            problems.append(f"I couldn't find the role `{role_text}` — pick it from the @ list.")
+        else:
+            pairs.append((emoji, role))
+    return pairs, problems
 
 
 def normalize_emoji(text):
@@ -70,7 +113,7 @@ class Roles(commands.Cog):
         """This server's settings, creating them on first use."""
         key = str(guild.id)
         if key not in self.config:
-            entry = {"message_id": None, "roles": {}}
+            entry = {"message_id": None, "channel_id": None, "roles": {}}
             legacy_message = self.legacy_message_ids.get(key)
             if legacy_message:
                 # Carry an old-style setup over: same picker message, and the
@@ -101,31 +144,38 @@ class Roles(commands.Cog):
 
     # --- admin commands: set up this server's roles ---
 
-    @app_commands.command(name="roleadd", description="Add a role members can pick for themselves (admin only)")
-    @app_commands.describe(emoji="The emoji members react with", role="The role they get")
+    @app_commands.command(name="roleadd", description="Add pickable roles — one or more: 🎮 @Gamer 🎨 @Artist (admin only)")
+    @app_commands.describe(roles="Emoji then role, as many pairs as you like, e.g. 🎮 @Gamer 🎨 @Artist")
     @app_commands.guild_only()
     @app_commands.checks.has_permissions(manage_roles=True)
-    async def roleadd(self, interaction: discord.Interaction, emoji: str, role: discord.Role):
-        key = normalize_emoji(emoji)
-        if key is None:
-            await interaction.response.send_message("That doesn't look like an emoji — try again with a single emoji.", ephemeral=True)
-            return
-
-        problem = self._role_problem(interaction, role)
-        if problem:
-            await interaction.response.send_message(problem, ephemeral=True)
-            return
-
+    async def roleadd(self, interaction: discord.Interaction, roles: str):
+        pairs, problems = parse_role_pairs(roles, interaction.guild)
         settings = self._get_guild(interaction.guild)
-        if key not in settings["roles"] and len(settings["roles"]) >= MAX_ROLES:
-            await interaction.response.send_message(f"You can have at most {MAX_ROLES} pickable roles.", ephemeral=True)
+
+        added = []
+        for emoji, role in pairs:
+            problem = self._role_problem(interaction, role)
+            if problem:
+                problems.append(problem)
+                continue
+            # The same role under a new emoji: move it rather than listing it twice.
+            for old_emoji, role_id in list(settings["roles"].items()):
+                if role_id == role.id and old_emoji != emoji:
+                    del settings["roles"][old_emoji]
+            if emoji not in settings["roles"] and len(settings["roles"]) >= MAX_ROLES:
+                problems.append(f"Skipped **{role.name}** — you can have at most {MAX_ROLES} pickable roles.")
+                continue
+            settings["roles"][emoji] = role.id
+            added.append(f"{emoji} → **{role.name}**")
+
+        if not added:
+            await interaction.response.send_message("\n".join(problems) or "Nothing to add.", ephemeral=True)
             return
 
-        settings["roles"][key] = role.id
         self._save()
-        await interaction.response.send_message(
-            f"{key} now gives **{role.name}**. Run `/rolesetup` to post an updated picker.", ephemeral=True
-        )
+        await interaction.response.defer(ephemeral=True)  # updating the picker can take a few seconds
+        lines = ["Added: " + ", ".join(added)] + problems + [await self._refresh_note(interaction.guild)]
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     @app_commands.command(name="roleremove", description="Stop offering a role in the picker (admin only)")
     @app_commands.describe(emoji="The emoji of the role to remove")
@@ -140,9 +190,53 @@ class Roles(commands.Cog):
 
         del settings["roles"][key]
         self._save()
-        await interaction.response.send_message(
-            f"Removed {key}. Run `/rolesetup` to post an updated picker.", ephemeral=True
-        )
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(f"Removed {key}. " + await self._refresh_note(interaction.guild), ephemeral=True)
+
+    # --- keeping the picker message up to date ---
+
+    def _picker_text(self, guild):
+        return "\n".join(self._picker_lines(guild)) + "\n\nReact to add a role, remove your reaction to take it off."
+
+    async def _picker_message(self, guild):
+        """The posted picker message, or None if there isn't one we can reach."""
+        settings = self._get_guild(guild)
+        if not settings.get("message_id") or not settings.get("channel_id"):
+            return None
+        channel = guild.get_channel(settings["channel_id"])
+        if channel is None:
+            return None
+        try:
+            return await channel.fetch_message(settings["message_id"])
+        except discord.HTTPException:
+            return None  # deleted, or the bot can't see the channel any more
+
+    async def refresh_picker(self, guild):
+        """Make the posted picker match the list: same text, one reaction per
+        role. Returns True if a picker was found and updated."""
+        message = await self._picker_message(guild)
+        if message is None:
+            return False
+
+        settings = self._get_guild(guild)
+        wanted = [emoji for emoji, role_id in settings["roles"].items() if guild.get_role(role_id)]
+        embed = discord.Embed(title="Pick your roles", description=self._picker_text(guild), color=discord.Color.dark_teal())
+        try:
+            await message.edit(embed=embed)
+            present = {str(r.emoji) for r in message.reactions if r.me}
+            for emoji in present - set(wanted):
+                await message.remove_reaction(emoji, guild.me)
+            for emoji in wanted:
+                if emoji not in present:
+                    await message.add_reaction(emoji)
+        except discord.HTTPException:
+            return False
+        return True
+
+    async def _refresh_note(self, guild):
+        if await self.refresh_picker(guild):
+            return "The picker has been updated."
+        return "Run `/rolesetup` in your roles channel to post the picker — after that it updates by itself."
 
     @app_commands.command(name="rolelist", description="Show the roles members can pick")
     @app_commands.guild_only()
@@ -162,7 +256,7 @@ class Roles(commands.Cog):
                 lines.append(f"{emoji} — {role.name}")
         return lines
 
-    @app_commands.command(name="rolesetup", description="Post the reaction-role picker in this channel (admin only)")
+    @app_commands.command(name="rolesetup", description="Post the role picker in this channel — replaces the old one (admin only)")
     @app_commands.guild_only()
     @app_commands.checks.has_permissions(manage_roles=True)
     async def rolesetup(self, interaction: discord.Interaction):
@@ -175,8 +269,18 @@ class Roles(commands.Cog):
         # gives us to reply, so acknowledge first and finish afterwards.
         await interaction.response.defer(ephemeral=True)
 
-        description = "\n".join(lines) + "\n\nReact to add a role, remove your reaction to take it off."
-        embed = discord.Embed(title="Pick your roles", description=description, color=discord.Color.dark_teal())
+        # Only one picker per server: take the old one down (it's the bot's own
+        # message, so no extra permission is needed).
+        old = await self._picker_message(interaction.guild)
+        if old is not None:
+            try:
+                await old.delete()
+            except discord.HTTPException:
+                pass
+
+        embed = discord.Embed(
+            title="Pick your roles", description=self._picker_text(interaction.guild), color=discord.Color.dark_teal()
+        )
         message = await interaction.channel.send(embed=embed)
 
         settings = self._get_guild(interaction.guild)
@@ -185,8 +289,11 @@ class Roles(commands.Cog):
                 await message.add_reaction(emoji)
 
         settings["message_id"] = message.id
+        settings["channel_id"] = interaction.channel.id
         self._save()
-        await interaction.followup.send("Role picker posted.", ephemeral=True)
+        await interaction.followup.send(
+            "Role picker posted. From now on `/roleadd` and `/roleremove` update it by themselves.", ephemeral=True
+        )
 
     # --- reaction picker ---
 
