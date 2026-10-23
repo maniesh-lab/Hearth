@@ -2,10 +2,11 @@
 
 [![CI](https://github.com/maniesh-lab/Hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/maniesh-lab/Hearth/actions/workflows/ci.yml)
 
-A Discord bot that handles the basics a server needs — onboarding, roles,
-moderation, deadlines, respect points and utility commands — plus one thing most bots at this
-scale don't have: an AI-powered FAQ system that actually understands what it's
-answering, instead of matching keywords.
+A Discord bot that runs a whole community server — onboarding, self-serve
+roles, moderation with a mod log, a deadline board, respect points with levels
+and utility commands — plus one thing most bots at this scale don't have: an
+AI-powered FAQ that answers from the server's own docs, instead of matching
+keywords.
 
 Built to demonstrate backend and applied-AI skills together: `discord.py`
 for the bot layer, a hand-rolled retrieval pipeline (Gemini embeddings + plain
