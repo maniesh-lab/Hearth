@@ -161,7 +161,7 @@ Administrator roles, and roles above Hearth's own or the admin's own.
 ---
 ## How the Deadline Board Works
 - `/deadlines` — **everyone**: upcoming deadlines, soonest first
-- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:17:00` and `channel:#assignments`
+- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:5:00 PM` (or `5pm`, `17:00`) and `channel:#assignments`
 - `/deadline remove` — start typing and pick the deadline from the dropdown (or type its number)
 
 **Numbers are positions in the list.** The soonest deadline is always **#1**, the
