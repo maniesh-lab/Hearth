@@ -1,7 +1,7 @@
 """
 Deadline board.
 - /deadlines — everyone: upcoming deadlines, soonest first, numbered #1, #2, #3…
-- /deadline add "Maths assignment" 2026-10-25 [time] [channel]
+- /deadline add "Maths assignment" 2026-10-25 [time, e.g. 5pm or 17:00] [channel]
 - /deadline remove — pick the deadline from a dropdown (or type its number)
 
 The numbers are positions in the list, worked out fresh each time: the soonest
@@ -27,6 +27,7 @@ as long as the deadline itself hasn't passed.
 """
 
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -49,8 +50,35 @@ def server_timezone():
         return ZoneInfo("Asia/Kathmandu")
 
 
+TIME_HELP = "Write the time like 5:00 PM, 5pm or 17:00."
+AM_PM_RE = re.compile(r"^(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s*m\.?$", re.IGNORECASE)
+
+
+def parse_time(text):
+    """Turn "17:00", "5:00 PM", "5pm" or "5:30 p.m." into (hour, minute).
+
+    Raises ValueError with a message meant for the user if it can't be read.
+    """
+    text = text.strip()
+    match = AM_PM_RE.match(text)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        if not 1 <= hour <= 12 or minute > 59:
+            raise ValueError(TIME_HELP)
+        hour %= 12  # 12 AM is 0:00, 12 PM stays 12:00
+        if match.group(3).lower() == "p":
+            hour += 12
+        return hour, minute
+    try:
+        clock = datetime.strptime(text, "%H:%M")
+    except ValueError:
+        raise ValueError(TIME_HELP)
+    return clock.hour, clock.minute
+
+
 def parse_deadline(date_text, time_text=None, tz=None):
-    """Turn "2026-10-25" (+ optional "17:00") into (due_at, remind_at) UTC timestamps.
+    """Turn "2026-10-25" (+ optional "5:00 PM" or "17:00") into (due_at, remind_at) UTC timestamps.
 
     Raises ValueError with a message meant for the user if the input is wrong.
     """
@@ -61,11 +89,8 @@ def parse_deadline(date_text, time_text=None, tz=None):
         raise ValueError("Write the date as YYYY-MM-DD, e.g. 2026-10-25.")
 
     if time_text:
-        try:
-            clock = datetime.strptime(time_text.strip(), "%H:%M")
-        except ValueError:
-            raise ValueError("Write the time as HH:MM in 24-hour form, e.g. 17:00.")
-        due = day.replace(hour=clock.hour, minute=clock.minute, tzinfo=tz)
+        hour, minute = parse_time(time_text)
+        due = day.replace(hour=hour, minute=minute, tzinfo=tz)
         remind = due - timedelta(hours=24)
     else:
         due = day.replace(hour=23, minute=59, tzinfo=tz)
@@ -183,7 +208,7 @@ class Deadlines(commands.Cog):
     @app_commands.describe(
         title="What's due, e.g. Maths assignment",
         date="Due date as YYYY-MM-DD",
-        due_time="Optional due time as HH:MM (24-hour)",
+        due_time="Optional due time, e.g. 5:00 PM, 5pm or 17:00",
         channel="Where to post the reminder (default: this channel)",
     )
     async def add(

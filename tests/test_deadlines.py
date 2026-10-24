@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from cogs import deadlines
-from cogs.deadlines import Deadlines, parse_deadline
+from cogs.deadlines import Deadlines, parse_deadline, parse_time
 from conftest import make_guild, make_interaction, make_member, reply_text
 
 KTM = ZoneInfo("Asia/Kathmandu")
@@ -28,7 +28,34 @@ def test_with_time_reminds_24h_before():
     assert remind == due - 24 * 3600
 
 
-@pytest.mark.parametrize("date, clock", [("25-10-2030", None), ("2030-13-01", None), ("2030-10-25", "5pm")])
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("17:00", (17, 0)),
+        ("09:05", (9, 5)),
+        ("5:00 PM", (17, 0)),
+        ("5pm", (17, 0)),
+        ("5:30pm", (17, 30)),
+        ("5.30 p.m.", (17, 30)),
+        ("9 AM", (9, 0)),
+        ("12pm", (12, 0)),
+        ("12:15 am", (0, 15)),
+    ],
+)
+def test_time_accepts_12_and_24_hour(text, expected):
+    assert parse_time(text) == expected
+
+
+def test_pm_time_sets_the_due_hour():
+    due, _ = parse_deadline("2030-10-25", "5:00 PM", tz=KTM)
+    assert due == ktm(2030, 10, 25, 17, 0)
+
+
+@pytest.mark.parametrize(
+    "date, clock",
+    [("25-10-2030", None), ("2030-13-01", None), ("2030-10-25", "13pm"), ("2030-10-25", "0am"),
+     ("2030-10-25", "25:00"), ("2030-10-25", "5:75pm"), ("2030-10-25", "evening")],
+)
 def test_bad_input_gives_a_readable_error(date, clock):
     with pytest.raises(ValueError):
         parse_deadline(date, clock, tz=KTM)
