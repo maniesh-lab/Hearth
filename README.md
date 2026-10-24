@@ -287,6 +287,28 @@ and reboots:
 docker run -d --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 ```
 
+### Updating to a new version
+When new code is pushed, log in to the server and run these from the Hearth
+folder:
+```bash
+git pull
+docker build -t hearth .
+docker rm -f hearth
+docker run -d --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
+docker logs --tail 5 hearth
+```
+- `git pull` should list the changed files or say "Already up to date". If it
+  prints `fatal:` or `error:`, stop there — the rest would just rebuild the old
+  code.
+- `docker logs` should end with `Hearth is online`.
+- The `data/` folder and `.env` aren't touched, so settings, respect points and
+  deadlines carry over.
+- After an update that changes slash commands, press **Ctrl+R** in Discord to
+  see the new versions.
+- If you only changed `.env`, skip `git pull` and the build: just run the
+  `docker rm -f` and `docker run` lines again (a plain `docker restart` doesn't
+  reload `.env`).
+
 ---
 ## Use Case
 Built as a reference implementation for common Discord bot use cases —
