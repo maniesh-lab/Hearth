@@ -55,6 +55,12 @@ def needs_mention_everyone(role):
     return role.is_default() or not role.mentionable
 
 
+def ping_text(role):
+    """How to write the ping in a message. discord.py writes @everyone as a role
+    tag, which Discord shows as "@@everyone" and which notifies nobody."""
+    return "@everyone" if role.is_default() else role.mention
+
+
 def ping_mentions(role):
     """Allowed mentions that let exactly this role (or @everyone) be pinged."""
     if role.is_default():
@@ -163,7 +169,7 @@ class Deadlines(commands.Cog):
             mentions = discord.AllowedMentions.none()
             role = self.ping_role(row)
             if role is not None:
-                text = f"{role.mention} {text}"
+                text = f"{ping_text(role)} {text}"
                 mentions = ping_mentions(role)
             try:
                 channel = self.bot.get_channel(row["channel_id"]) or await self.bot.fetch_channel(row["channel_id"])
@@ -291,7 +297,7 @@ class Deadlines(commands.Cog):
         # Picking a role here mustn't let someone ping a role they couldn't ping themselves.
         if ping is not None and needs_mention_everyone(ping) and not target.permissions_for(interaction.user).mention_everyone:
             await interaction.response.send_message(
-                f"You can't ping {ping.mention} — that needs the Mention @everyone, @here and All Roles permission.",
+                f"You can't ping {ping_text(ping)} — that needs the Mention @everyone, @here and All Roles permission.",
                 ephemeral=True,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
@@ -310,7 +316,7 @@ class Deadlines(commands.Cog):
 
         due = int(due_at)
         role = self.ping_role({"ping_role_id": ping and ping.id, "guild_id": interaction.guild.id})
-        who = f" and ping {role.mention}" if role is not None else ""
+        who = f" and ping {ping_text(role)}" if role is not None else ""
         note = "" if remind_at > now else " It's due within a day, so there won't be a separate reminder."
         await interaction.response.send_message(
             f"📌 Added **#{position} {title.strip()}** — due <t:{due}:F> (<t:{due}:R>). "
@@ -338,7 +344,7 @@ class Deadlines(commands.Cog):
                 + "."
             )
         await interaction.response.send_message(
-            f"Reminders will ping {role.mention}.{warning}",
+            f"Reminders will ping {ping_text(role)}.{warning}",
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )

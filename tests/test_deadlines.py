@@ -225,7 +225,7 @@ def test_server_limit(cog, monkeypatch):
 def make_role(role_id=77, mentionable=True, everyone=False):
     role = MagicMock()
     role.id = role_id
-    role.mention = "@everyone" if everyone else f"<@&{role_id}>"
+    role.mention = f"<@&{role_id}>"  # like discord.py, even for @everyone
     role.mentionable = mentionable
     role.is_default.return_value = everyone
     return role
@@ -273,8 +273,12 @@ def test_everyone_ping_allows_only_everyone(cog):
     storage.set_setting(cog.db, 1, deadlines.PING_KEY, 1)
     reminder_for(cog, {1: everyone})
     call = cog.channel.send.await_args
-    assert call.args[0].startswith("@everyone")
+    assert call.args[0].startswith("@everyone ⏰")  # not "<@&1>", which Discord shows as @@everyone
     assert call.kwargs["allowed_mentions"].everyone is True
+
+
+def test_setting_everyone_says_everyone(cog):
+    assert set_ping(cog, make_role(1, everyone=True)) == "Reminders will ping @everyone."
 
 
 def test_a_deleted_role_just_means_no_ping(cog):
