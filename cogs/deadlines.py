@@ -1,8 +1,9 @@
 """
 Deadline board.
 - /deadlines — everyone: upcoming deadlines, soonest first, numbered #1, #2, #3…
-- /deadline add "Maths assignment" 2026-10-25 [time, e.g. 5pm or 17:00] [channel]
+- /deadline add "Maths assignment" 2026-10-25 [time, e.g. 5pm or 17:00] [channel] [ping]
 - /deadline remove — pick the deadline from a dropdown (or type its number)
+- /deadline ping @Students — the role pinged with every reminder (Manage Server)
 
 The numbers are positions in the list, worked out fresh each time: the soonest
 deadline is always #1, and when it passes the next one becomes #1. Each server
@@ -16,6 +17,11 @@ open to everyone.
 The bot posts a reminder in the deadline's channel a day before it's due:
 - with a time: 24 hours before
 - date only: at 9:00 the day before (the deadline counts as end of that day)
+
+Reminders ping nobody unless a role is set: /deadline ping sets the server's
+default, and /deadline add ping:@Role overrides it for one deadline. Pinging a
+role that isn't mentionable (or @everyone) needs Mention @everyone, @here and
+All Roles — for Hearth to make it notify, and for whoever picks it in /deadline add.
 
 Dates and times are read in HEARTH_TIMEZONE (default Asia/Kathmandu). In
 Discord, the times are shown with <t:...> timestamps, so every member sees
@@ -41,6 +47,19 @@ import storage
 MAX_TITLE = 100
 MAX_UPCOMING_PER_SERVER = 50
 KEEP_PAST_DAYS = 7  # finished deadlines are cleaned up after a week
+PING_KEY = "deadline_ping_role"
+
+
+def needs_mention_everyone(role):
+    """True if pinging this role only works with Mention @everyone, @here and All Roles."""
+    return role.is_default() or not role.mentionable
+
+
+def ping_mentions(role):
+    """Allowed mentions that let exactly this role (or @everyone) be pinged."""
+    if role.is_default():
+        return discord.AllowedMentions(everyone=True, users=False, roles=False)
+    return discord.AllowedMentions(everyone=False, users=False, roles=[role])
 
 
 def server_timezone():
@@ -114,7 +133,11 @@ class Deadlines(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def reminder_loop(self):
-        await self.send_due_reminders(time.time())
+        # An uncaught error would stop the loop for good, so log it and carry on.
+        try:
+            await self.send_due_reminders(time.time())
+        except Exception as e:
+            print(f"[error] deadline reminders: {e!r}")
 
     @reminder_loop.before_loop
     async def _wait_for_login(self):
@@ -135,22 +158,33 @@ class Deadlines(commands.Cog):
             if row["due_at"] <= now:
                 continue  # the bot was offline past the deadline itself — too late to remind
 
-            channel = self.bot.get_channel(row["channel_id"])
-            if channel is None:
-                continue
             due = int(row["due_at"])
+            text = f"⏰ Reminder: **{row['title']}** is due <t:{due}:R> (<t:{due}:f>)."
+            mentions = discord.AllowedMentions.none()
+            role = self.ping_role(row)
+            if role is not None:
+                text = f"{role.mention} {text}"
+                mentions = ping_mentions(role)
             try:
-                await channel.send(
-                    f"⏰ Reminder: **{row['title']}** is due <t:{due}:R> (<t:{due}:f>).",
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
+                channel = self.bot.get_channel(row["channel_id"]) or await self.bot.fetch_channel(row["channel_id"])
+                await channel.send(text, allowed_mentions=mentions)
                 sent += 1
-            except discord.HTTPException:
-                pass
+            except discord.HTTPException as e:
+                # Usually the bot can't see or post in that channel any more.
+                print(f"[error] deadline reminder for {row['title']!r} in channel {row['channel_id']}: {e!r}")
 
         self.db.execute("DELETE FROM deadlines WHERE due_at < ?", (now - KEEP_PAST_DAYS * 86400,))
         self.db.commit()
         return sent
+
+    def ping_role(self, row):
+        """The role a reminder pings: the deadline's own, else the server default.
+        None if neither is set, or the role has since been deleted."""
+        role_id = row["ping_role_id"] or storage.get_setting(self.db, row["guild_id"], PING_KEY)
+        guild = self.bot.get_guild(row["guild_id"])
+        if role_id is None or guild is None:
+            return None
+        return guild.get_role(int(role_id))
 
     # --- the list, in order ---
 
@@ -210,6 +244,7 @@ class Deadlines(commands.Cog):
         date="Due date as YYYY-MM-DD",
         due_time="Optional due time, e.g. 5:00 PM, 5pm or 17:00",
         channel="Where to post the reminder (default: this channel)",
+        ping="Role to ping with the reminder (default: the one set with /deadline ping)",
     )
     async def add(
         self,
@@ -218,6 +253,7 @@ class Deadlines(commands.Cog):
         date: str,
         due_time: str | None = None,
         channel: discord.TextChannel | None = None,
+        ping: discord.Role | None = None,
     ):
         try:
             due_at, remind_at = parse_deadline(date, due_time)
@@ -240,9 +276,31 @@ class Deadlines(commands.Cog):
             return
 
         target = channel or interaction.channel
+        # Slash-command replies work even where the bot can't post, so check now
+        # rather than let the reminder fail silently a day before.
+        perms = target.permissions_for(interaction.guild.me)
+        if not (perms.view_channel and perms.send_messages):
+            await interaction.response.send_message(
+                f"I can't post in {target.mention}, so I couldn't remind it. Add Hearth to that channel "
+                "(Edit Channel → Permissions → add Hearth with View Channel and Send Messages), "
+                "or pick another channel with `channel:`.",
+                ephemeral=True,
+            )
+            return
+
+        # Picking a role here mustn't let someone ping a role they couldn't ping themselves.
+        if ping is not None and needs_mention_everyone(ping) and not target.permissions_for(interaction.user).mention_everyone:
+            await interaction.response.send_message(
+                f"You can't ping {ping.mention} — that needs the Mention @everyone, @here and All Roles permission.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
         cursor = self.db.execute(
-            "INSERT INTO deadlines (guild_id, channel_id, title, due_at, remind_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-            (interaction.guild.id, target.id, title.strip(), due_at, remind_at, interaction.user.id),
+            "INSERT INTO deadlines (guild_id, channel_id, title, due_at, remind_at, created_by, ping_role_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (interaction.guild.id, target.id, title.strip(), due_at, remind_at, interaction.user.id, ping and ping.id),
         )
         self.db.commit()
         position = next(
@@ -251,10 +309,37 @@ class Deadlines(commands.Cog):
         )
 
         due = int(due_at)
+        role = self.ping_role({"ping_role_id": ping and ping.id, "guild_id": interaction.guild.id})
+        who = f" and ping {role.mention}" if role is not None else ""
         note = "" if remind_at > now else " It's due within a day, so there won't be a separate reminder."
         await interaction.response.send_message(
             f"📌 Added **#{position} {title.strip()}** — due <t:{due}:F> (<t:{due}:R>). "
-            f"I'll remind {target.mention} a day before.{note}",
+            f"I'll remind {target.mention}{who} a day before.{note}",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @deadline.command(name="ping", description="Set the role pinged with every reminder; leave it empty to stop pinging")
+    @app_commands.describe(role="Role to ping, e.g. @Students (leave empty to turn pinging off)")
+    async def set_ping(self, interaction: discord.Interaction, role: discord.Role | None = None):
+        if not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message("You need Manage Server to change this.", ephemeral=True)
+            return
+        if role is None:
+            storage.delete_setting(self.db, interaction.guild.id, PING_KEY)
+            await interaction.response.send_message("Reminders won't ping anyone now.", ephemeral=True)
+            return
+
+        storage.set_setting(self.db, interaction.guild.id, PING_KEY, role.id)
+        warning = ""
+        if needs_mention_everyone(role) and not interaction.guild.me.guild_permissions.mention_everyone:
+            warning = (
+                " ⚠️ I don't have **Mention @everyone, @here and All Roles**, so the ping won't notify anyone"
+                + ("" if role.is_default() else " — give me that permission, or make the role mentionable in its settings")
+                + "."
+            )
+        await interaction.response.send_message(
+            f"Reminders will ping {role.mention}.{warning}",
+            ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
