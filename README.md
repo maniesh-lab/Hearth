@@ -199,6 +199,11 @@ Roles → the role → "Allow anyone to @mention this role") or Hearth has **Men
 `@everyone`. `/deadline ping` warns you if neither is true. In `/deadline add`,
 someone can only pick a role they could ping themselves.
 
+There's no ping role until an admin sets one, so a new server's reminders ping
+nobody. A role picked with `ping:` stays with that deadline for good. Deadlines
+added without one use whatever the default is **when the reminder is sent**, so
+changing `/deadline ping` also changes who they ping.
+
 ---
 ## How Respect Points Work
 When a message says thanks (*thanks*, *thank you*, *ty*, *thx*…) and is aimed at
