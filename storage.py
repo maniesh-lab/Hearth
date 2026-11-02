@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS deadlines (
     due_at     REAL    NOT NULL,   -- UTC timestamp
     remind_at  REAL    NOT NULL,   -- UTC timestamp
     created_by INTEGER NOT NULL,
-    reminded   INTEGER NOT NULL DEFAULT 0
+    reminded   INTEGER NOT NULL DEFAULT 0,
+    ping_role_id INTEGER            -- role to ping with the reminder; NULL = the server default
 );
 """
 
@@ -49,6 +50,10 @@ def connect(path=DB_PATH):
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row  # rows behave like dicts: row["title"]
     db.executescript(SCHEMA)
+    # Databases made before ping roles existed don't have the column yet.
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(deadlines)")}
+    if "ping_role_id" not in columns:
+        db.execute("ALTER TABLE deadlines ADD COLUMN ping_role_id INTEGER")
     db.commit()
     return db
 

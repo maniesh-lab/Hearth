@@ -161,8 +161,9 @@ Administrator roles, and roles above Hearth's own or the admin's own.
 ---
 ## How the Deadline Board Works
 - `/deadlines` — **everyone**: upcoming deadlines, soonest first
-- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:17:00` and `channel:#assignments`
+- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:17:00`, `channel:#assignments` and `ping:@CSE-A`
 - `/deadline remove` — start typing and pick the deadline from the dropdown (or type its number)
+- `/deadline ping role:@Students` — the role pinged with every reminder (Manage Server); run it with no role to stop pinging
 
 **Numbers are positions in the list.** The soonest deadline is always **#1**, the
 next is #2, and so on. When #1 passes, #2 becomes #1. Each server has its own list,
@@ -181,6 +182,22 @@ shows every time in each member's own time zone. If the bot was offline when a
 reminder was due, it's sent as soon as the bot is back — unless the deadline
 itself has passed. Finished deadlines are cleaned up after a week; each server
 can have up to 50 upcoming.
+
+**The bot has to be able to post in that channel.** Slash-command replies work
+even in a private channel the bot isn't part of, but the reminder is a normal
+message, so `/deadline add` refuses a channel where Hearth lacks **View Channel**
+and **Send Messages**. Add Hearth in Edit Channel → Permissions, or pick another
+channel. A reminder that still fails to post is logged as `[error] deadline reminder …`.
+
+**Pinging a role.** A reminder on its own only notifies members who have that
+channel set to "All Messages". To buzz everyone's phone, pick a role to ping:
+`/deadline ping role:@Students` sets it for every reminder in the server, and
+`ping:` in `/deadline add` overrides it for one deadline (handy for a single
+section). The ping only notifies if the role is **mentionable** (Server Settings →
+Roles → the role → "Allow anyone to @mention this role") or Hearth has **Mention
+@everyone, @here and All Roles** — that permission is also needed to ping
+`@everyone`. `/deadline ping` warns you if neither is true. In `/deadline add`,
+someone can only pick a role they could ping themselves.
 
 ---
 ## How Respect Points Work
@@ -249,6 +266,7 @@ member the role for their current level. From then on:
 | `/modlog set` · `off` | Record moderation actions in a channel (admin) |
 | `/deadlines` | Upcoming deadlines, soonest first (everyone) |
 | `/deadline add` · `remove` | Add or remove deadlines; reminded a day before (roles an admin allows) |
+| `/deadline ping` | Role pinged with every deadline reminder, or none (admin) |
 | `/respect` | Show someone's respect points, level and rank |
 | `/leaderboard` | Top 10 most respected members in this server |
 | `/levelroles on` · `off` | Give members a role for their respect level (admin) |

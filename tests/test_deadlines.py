@@ -1,10 +1,12 @@
 import asyncio
+import sqlite3
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import storage
 from cogs import deadlines
 from cogs.deadlines import Deadlines, parse_deadline
 from conftest import make_guild, make_interaction, make_member, reply_text
@@ -110,6 +112,21 @@ def test_reminder_sent_once_when_its_time_comes(cog):
     assert asyncio.run(cog.send_due_reminders(remind + 120)) == 0  # never twice
 
 
+def test_add_is_refused_where_the_bot_cant_post(cog):
+    cog.channel.permissions_for = MagicMock(return_value=MagicMock(view_channel=True, send_messages=False))
+    interaction = add(cog, make_member(1), "Private", "2099-06-10")
+    assert "can't post in #assignments" in reply_text(interaction)
+    assert cog.upcoming(1) == []
+
+
+def test_reminder_reaches_a_channel_missing_from_the_cache(cog):
+    add(cog, make_member(1), "Lab report", "2099-06-10", "17:00")
+    _, remind = parse_deadline("2099-06-10", "17:00", tz=KTM)
+    cog.bot.get_channel = lambda cid: None
+    cog.bot.fetch_channel = AsyncMock(return_value=cog.channel)
+    assert asyncio.run(cog.send_due_reminders(remind + 60)) == 1
+
+
 def test_no_reminder_if_the_bot_was_offline_past_the_deadline(cog):
     add(cog, make_member(1), "Missed", "2099-06-10")
     due, _ = parse_deadline("2099-06-10", tz=KTM)
@@ -176,3 +193,111 @@ def test_server_limit(cog, monkeypatch):
     add(cog, make_member(1), "B", future_date(2))
     interaction = add(cog, make_member(1), "C", future_date(2))
     assert "remove some first" in reply_text(interaction)
+
+
+def make_role(role_id=77, mentionable=True, everyone=False):
+    role = MagicMock()
+    role.id = role_id
+    role.mention = "@everyone" if everyone else f"<@&{role_id}>"
+    role.mentionable = mentionable
+    role.is_default.return_value = everyone
+    return role
+
+
+def reminder_for(cog, roles, title="Lab report", ping=None, user=None):
+    """Add a deadline (optionally with a ping role) and fire its reminder."""
+    guild = make_guild()
+    guild.get_role = lambda rid: roles.get(rid)
+    cog.bot.get_guild = lambda gid: guild
+    interaction = make_interaction(user or make_member(1), guild)
+    interaction.channel = cog.channel
+    asyncio.run(cog.add.callback(cog, interaction, title, "2099-06-10", "17:00", None, ping))
+    _, remind = parse_deadline("2099-06-10", "17:00", tz=KTM)
+    asyncio.run(cog.send_due_reminders(remind + 60))
+    return interaction
+
+
+def test_reminder_pings_nobody_by_default(cog):
+    reminder_for(cog, {})
+    call = cog.channel.send.await_args
+    assert call.args[0].startswith("⏰ Reminder")
+    assert call.kwargs["allowed_mentions"].roles is False
+
+
+def test_reminder_pings_the_server_default_role(cog):
+    students = make_role(77)
+    storage.set_setting(cog.db, 1, deadlines.PING_KEY, 77)
+    reply = reply_text(reminder_for(cog, {77: students}))
+    assert "and ping <@&77>" in reply
+    call = cog.channel.send.await_args
+    assert call.args[0].startswith("<@&77> ⏰ Reminder")
+    assert call.kwargs["allowed_mentions"].roles == [students]
+
+
+def test_a_deadlines_own_role_wins_over_the_default(cog):
+    storage.set_setting(cog.db, 1, deadlines.PING_KEY, 77)
+    section = make_role(88)
+    reminder_for(cog, {77: make_role(77), 88: section}, ping=section)
+    assert cog.channel.send.await_args.args[0].startswith("<@&88>")
+
+
+def test_everyone_ping_allows_only_everyone(cog):
+    everyone = make_role(1, everyone=True)
+    storage.set_setting(cog.db, 1, deadlines.PING_KEY, 1)
+    reminder_for(cog, {1: everyone})
+    call = cog.channel.send.await_args
+    assert call.args[0].startswith("@everyone")
+    assert call.kwargs["allowed_mentions"].everyone is True
+
+
+def test_a_deleted_role_just_means_no_ping(cog):
+    storage.set_setting(cog.db, 1, deadlines.PING_KEY, 77)
+    reminder_for(cog, {})
+    assert cog.channel.send.await_args.args[0].startswith("⏰ Reminder")
+
+
+def test_cant_pick_a_role_you_couldnt_ping_yourself(cog):
+    cog.channel.permissions_for = MagicMock(return_value=MagicMock(mention_everyone=False))
+    interaction = reminder_for(cog, {}, ping=make_role(77, mentionable=False))
+    assert "You can't ping" in reply_text(interaction)
+    assert cog.upcoming(1) == []
+
+
+def set_ping(cog, role, manage_guild=True, bot_can_mention=True):
+    user = make_member(1)
+    user.guild_permissions.manage_guild = manage_guild
+    guild = make_guild()
+    guild.me.guild_permissions.mention_everyone = bot_can_mention
+    interaction = make_interaction(user, guild)
+    asyncio.run(cog.set_ping.callback(cog, interaction, role))
+    return reply_text(interaction)
+
+
+def test_setting_the_ping_role_needs_manage_server(cog):
+    assert "Manage Server" in set_ping(cog, make_role(77), manage_guild=False)
+    assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) is None
+
+
+def test_set_and_clear_the_ping_role(cog):
+    assert set_ping(cog, make_role(77)) == "Reminders will ping <@&77>."
+    assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) == "77"
+    assert "won't ping anyone" in set_ping(cog, None)
+    assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) is None
+
+
+def test_warns_when_the_ping_wouldnt_notify(cog):
+    assert "won't notify anyone" in set_ping(cog, make_role(77, mentionable=False), bot_can_mention=False)
+    assert "won't notify anyone" not in set_ping(cog, make_role(77, mentionable=True), bot_can_mention=False)
+
+
+def test_old_databases_get_the_ping_column(tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE deadlines (id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL,"
+        " title TEXT NOT NULL, due_at REAL NOT NULL, remind_at REAL NOT NULL, created_by INTEGER NOT NULL,"
+        " reminded INTEGER NOT NULL DEFAULT 0)"
+    )
+    old.close()
+    columns = {r["name"] for r in storage.connect(path).execute("PRAGMA table_info(deadlines)")}
+    assert "ping_role_id" in columns
