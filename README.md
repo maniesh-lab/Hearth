@@ -161,7 +161,7 @@ Administrator roles, and roles above Hearth's own or the admin's own.
 ---
 ## How the Deadline Board Works
 - `/deadlines` — **everyone**: upcoming deadlines, soonest first
-- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:17:00`, `channel:#assignments` and `ping:@CSE-A`
+- `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:5:00 PM` (or `5pm`, `17:00`), `channel:#assignments` and `ping:@CSE-A`
 - `/deadline remove` — start typing and pick the deadline from the dropdown (or type its number)
 - `/deadline ping role:@Students` — the role pinged with every reminder (Manage Server); run it with no role to stop pinging
 
@@ -309,6 +309,28 @@ and reboots:
 ```bash
 docker run -d --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
 ```
+
+### Updating to a new version
+When new code is pushed, log in to the server and run these from the Hearth
+folder:
+```bash
+git pull
+docker build -t hearth .
+docker rm -f hearth
+docker run -d --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data --name hearth hearth
+docker logs --tail 5 hearth
+```
+- `git pull` should list the changed files or say "Already up to date". If it
+  prints `fatal:` or `error:`, stop there — the rest would just rebuild the old
+  code.
+- `docker logs` should end with `Hearth is online`.
+- The `data/` folder and `.env` aren't touched, so settings, respect points and
+  deadlines carry over.
+- After an update that changes slash commands, press **Ctrl+R** in Discord to
+  see the new versions.
+- If you only changed `.env`, skip `git pull` and the build: just run the
+  `docker rm -f` and `docker run` lines again (a plain `docker restart` doesn't
+  reload `.env`).
 
 ---
 ## Use Case
