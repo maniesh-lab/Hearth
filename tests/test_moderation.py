@@ -110,3 +110,25 @@ def test_spam_filter_counts_per_server(cog):
     for _ in range(2):
         asyncio.run(cog.on_message(message(1)))
     author.timeout.assert_awaited_once()
+
+
+def test_cant_clear_your_own_or_a_higher_ranked_members_warnings(cog, guild):
+    mod, boss = make_member(2, rank=5), make_member(4, rank=8)
+    asyncio.run(cog.warn.callback(cog, make_interaction(make_member(999, rank=0), guild), mod, "spam"))
+    asyncio.run(cog.warn.callback(cog, make_interaction(make_member(999, rank=0), guild), boss, "spam"))
+    for target in (mod, boss):
+        interaction = make_interaction(mod, guild)
+        asyncio.run(cog.clearwarnings.callback(cog, interaction, target))
+        assert "Cleared" not in reply_text(interaction)
+    assert cog.warning_count(guild.id, mod.id) == 1
+    assert cog.warning_count(guild.id, boss.id) == 1
+
+
+def test_mod_log_only_goes_to_a_channel_you_can_see(cog, guild):
+    hidden = MagicMock()
+    hidden.mention = "#secret"
+    hidden.permissions_for = lambda who: MagicMock(view_channel=False)
+    interaction = make_interaction(make_member(2, rank=5), guild)
+    asyncio.run(cog.modlog_set.callback(cog, interaction, hidden))
+    assert "can't see #secret" in reply_text(interaction)
+    assert storage.get_setting(cog.db, guild.id, moderation.MODLOG_KEY) is None

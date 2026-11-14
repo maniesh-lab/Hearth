@@ -117,3 +117,15 @@ def test_who_can_change_settings_is_up_to_the_admin(setup):
     asyncio.run(cog.set_message.callback(cog, interaction, "hi"))
     assert "Welcome message saved" in reply_text(interaction)
     assert storage.get_setting(cog.db, guild.id, "welcome_message") == "hi"
+
+
+def test_welcome_channel_must_be_one_you_can_post_in(setup):
+    cog, guild, _, _ = setup
+    announcements = MagicMock()
+    announcements.id = 21
+    announcements.mention = "#announcements"
+    announcements.permissions_for = lambda who: MagicMock(view_channel=True, send_messages=False)
+    interaction = make_interaction(new_member(guild), guild)
+    asyncio.run(cog.set_channel.callback(cog, interaction, announcements))
+    assert "can't post in #announcements" in reply_text(interaction)
+    assert storage.get_setting(cog.db, guild.id, "welcome_channel") is None

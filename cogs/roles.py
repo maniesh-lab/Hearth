@@ -20,10 +20,10 @@ Saved per server in data/roles.json:
 Role IDs are stored instead of names, so renaming a role doesn't break it.
 
 /roleadd, /roleremove and /rolesetup start hidden from members without Manage
-Roles. An admin can let any role or person use them in Server Settings →
+Roles. Each server can let any role or person use them in Server Settings →
 Integrations → Hearth, so someone can run the picker without Manage Roles —
-which is why a role they don't outrank, or one with permissions they don't
-have, can't be made pickable.
+which is why a role they don't outrank, or one giving permissions they don't
+have (server-wide or in any channel), can't be made pickable.
 """
 
 import json
@@ -33,6 +33,8 @@ from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+from guards import permissions_beyond
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONFIG_PATH = DATA_DIR / "roles.json"
@@ -91,7 +93,7 @@ def parse_role_pairs(text, guild):
 
 
 def normalize_emoji(text):
-    """Turn whatever the admin typed into the same string Discord reports
+    """Turn whatever was typed into the same string Discord reports
     on reactions, e.g. '<:party:123>' for custom emoji, '🎨' for normal ones.
     Returns None if it doesn't look like an emoji at all."""
     text = text.strip()
@@ -146,11 +148,15 @@ class Roles(commands.Cog):
             return f"**{role.name}** is above my highest role, so I can't assign it. Move my role higher first."
         if interaction.user.id != guild.owner_id and role >= interaction.user.top_role:
             return f"**{role.name}** is equal to or above your highest role, so you can't make it pickable."
-        if interaction.user.id != guild.owner_id and not role.permissions.is_subset(interaction.user.guild_permissions):
-            return f"**{role.name}** has permissions you don't have, so you can't make it pickable."
+        missing = permissions_beyond(guild, role, interaction.user)
+        if missing:
+            return (
+                f"**{role.name}** would give permissions you don't have ({', '.join(missing)}), "
+                "so you can't make it pickable."
+            )
         return None
 
-    # --- admin commands: set up this server's roles ---
+    # --- setup commands (hidden behind Manage Roles by default) ---
 
     @app_commands.command(name="roleadd", description="Add pickable roles — one or more: 🎮 @Gamer 🎨 @Artist")
     @app_commands.describe(roles="Emoji then role, as many pairs as you like, e.g. 🎮 @Gamer 🎨 @Artist")
@@ -251,7 +257,7 @@ class Roles(commands.Cog):
     async def rolelist(self, interaction: discord.Interaction):
         lines = self._picker_lines(interaction.guild)
         if not lines:
-            await interaction.response.send_message("No pickable roles yet — an admin can add some with `/roleadd`.", ephemeral=True)
+            await interaction.response.send_message("No pickable roles yet — whoever manages roles here can add some with `/roleadd`.", ephemeral=True)
             return
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 

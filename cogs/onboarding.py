@@ -8,7 +8,7 @@ Each server sets its own with /welcome:
 - /welcome role @Student     — role given on join (leave empty to turn off)
 - /welcome show / test       — check the setup, or preview it on yourself
 
-/welcome starts hidden from members without Manage Server; admins can let any
+/welcome starts hidden from members without Manage Server; each server can let any
 role or person use it in Server Settings → Integrations → Hearth → /welcome.
 
 Settings are saved in data/hearth.db.
@@ -19,6 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import storage
+from guards import can_post_in, permissions_beyond
 
 DEFAULT_MESSAGE = "Welcome, {user} — glad to have you here."
 MAX_MESSAGE = 500
@@ -34,7 +35,7 @@ def render_welcome(template, member):
     )
 
 
-def auto_role_problem(guild, role, admin):
+def auto_role_problem(guild, role, member):
     """Why this role can't be handed out on join, or None if it can."""
     if role.is_default():
         return "@everyone can't be used as the welcome role."
@@ -44,12 +45,16 @@ def auto_role_problem(guild, role, admin):
         return f"**{role.name}** has Administrator permission — it can't be given to everyone who joins."
     if role >= guild.me.top_role:
         return f"**{role.name}** is above my highest role, so I can't assign it. Move my role higher first."
-    if admin.id != guild.owner_id and role >= admin.top_role:
+    if member.id != guild.owner_id and role >= member.top_role:
         return f"**{role.name}** is equal to or above your highest role."
     # /welcome can be handed to people without Manage Server or Manage Roles,
     # so they mustn't give every newcomer powers they don't have themselves.
-    if admin.id != guild.owner_id and not role.permissions.is_subset(admin.guild_permissions):
-        return f"**{role.name}** has permissions you don't have, so you can't give it to everyone who joins."
+    missing = permissions_beyond(guild, role, member)
+    if missing:
+        return (
+            f"**{role.name}** would give permissions you don't have ({', '.join(missing)}), "
+            "so you can't give it to everyone who joins."
+        )
     return None
 
 
@@ -123,6 +128,11 @@ class Onboarding(commands.Cog):
 
     @group.command(name="channel", description="Where the public welcome message is posted")
     async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        if not can_post_in(channel, interaction.user):
+            await interaction.response.send_message(
+                f"You can't post in {channel.mention} yourself, so you can't send welcomes there.", ephemeral=True
+            )
+            return
         storage.set_setting(self.db, interaction.guild.id, "welcome_channel", channel.id)
         await interaction.response.send_message(f"New members will be welcomed in {channel.mention}.", ephemeral=True)
 

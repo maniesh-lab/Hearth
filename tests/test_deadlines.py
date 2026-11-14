@@ -208,9 +208,9 @@ def test_a_deadline_from_another_server_cant_be_removed(cog):
     assert "couldn't find" in remove(cog, f"id:{club_id}")  # remove() runs in server 1
 
 
-def test_who_can_add_and_remove_is_up_to_the_admin(cog):
-    # /deadline add|remove start hidden behind Manage Messages; the admin can
-    # allow roles in Server Settings. /deadlines has no such limit.
+def test_deadline_commands_start_hidden_and_the_list_is_open(cog):
+    # /deadline add|remove|ping start hidden behind Manage Messages (the server can
+    # allow roles in Integrations); /deadlines is open to everyone.
     assert cog.deadline.default_permissions.manage_messages is True
     assert cog.list_deadlines.default_permissions is None
 
@@ -347,3 +347,16 @@ def test_old_databases_get_the_ping_column(tmp_path):
     old.close()
     columns = {r["name"] for r in storage.connect(path).execute("PRAGMA table_info(deadlines)")}
     assert "ping_role_id" in columns
+
+
+def test_cant_send_reminders_to_a_channel_you_cant_post_in(cog):
+    announcements = MagicMock()
+    announcements.mention = "#announcements"
+    announcements.permissions_for = lambda who: MagicMock(
+        view_channel=True, send_messages=who.id == 555  # only Hearth (id 555) may post
+    )
+    interaction = make_interaction(make_member(1), make_guild())
+    interaction.channel = cog.channel
+    asyncio.run(cog.add.callback(cog, interaction, "Quiz", "2099-06-10", None, announcements))
+    assert "can't post in #announcements yourself" in reply_text(interaction)
+    assert cog.upcoming(1) == []

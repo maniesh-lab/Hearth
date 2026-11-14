@@ -112,7 +112,7 @@ class FAQ(commands.Cog):
             else:
                 print("[faq] GROQ_API_KEY is not set — /ask will be unavailable.")
 
-    # Hidden from members without Manage Server until an admin allows a role or
+    # Hidden from members without Manage Server until the server allows a role or
     # person in Server Settings → Integrations → Hearth → /faqload.
     @app_commands.command(name="faqload", description="Load this server's FAQ knowledge base")
     @app_commands.guild_only()
@@ -163,10 +163,10 @@ class FAQ(commands.Cog):
             chunks, embeddings, status = await asyncio.to_thread(load_knowledge_base, interaction.guild.id)
 
             if status == "missing":
-                await interaction.followup.send("No FAQ set up yet — an admin needs to run `/faqload` first.")
+                await interaction.followup.send("No FAQ set up yet — someone who manages the server needs to run `/faqload` first.")
                 return
             if status == "outdated":
-                await interaction.followup.send("This server's FAQ was loaded with an older version of Hearth — an admin needs to run `/faqload` again.")
+                await interaction.followup.send("This server's FAQ was loaded with an older version of Hearth — someone who manages the server needs to run `/faqload` again.")
                 return
 
             query_vec = (await self.embedder.embed([question], "RETRIEVAL_QUERY"))[0]

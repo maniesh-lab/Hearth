@@ -36,7 +36,7 @@ def role(role_id, name, rank=2, admin=False):
     r.name = name
     r.position = rank
     r.managed = False
-    r.permissions.administrator = admin
+    r.permissions = roles.discord.Permissions(administrator=admin)
     r.is_default = lambda: False
     r.__ge__ = lambda self, other: Rank(self.position) >= other
     return r
@@ -196,7 +196,7 @@ def test_cant_make_a_role_pickable_with_permissions_you_lack(cog, server):
     interaction.channel = server.channel
     asyncio.run(cog.roleadd.callback(cog, interaction, "🛡️ <@&15> 🎮 <@&11>"))
     reply = reply_text(interaction)
-    assert "**Mods** has permissions you don't have" in reply
+    assert "**Mods** would give permissions you don't have (Ban Members)" in reply
     assert cog._get_guild(server.guild)["roles"] == {"🎮": 11}
 
 
