@@ -18,6 +18,12 @@ Saved per server in data/roles.json:
       }
     }
 Role IDs are stored instead of names, so renaming a role doesn't break it.
+
+/roleadd, /roleremove and /rolesetup start hidden from members without Manage
+Roles. Each server can let any role or person use them in Server Settings →
+Integrations → Hearth, so someone can run the picker without Manage Roles —
+which is why a role they don't outrank, or one giving permissions they don't
+have (server-wide or in any channel), can't be made pickable.
 """
 
 import json
@@ -27,6 +33,8 @@ from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+from guards import permissions_beyond, short_list
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONFIG_PATH = DATA_DIR / "roles.json"
@@ -85,7 +93,7 @@ def parse_role_pairs(text, guild):
 
 
 def normalize_emoji(text):
-    """Turn whatever the admin typed into the same string Discord reports
+    """Turn whatever was typed into the same string Discord reports
     on reactions, e.g. '<:party:123>' for custom emoji, '🎨' for normal ones.
     Returns None if it doesn't look like an emoji at all."""
     text = text.strip()
@@ -140,14 +148,20 @@ class Roles(commands.Cog):
             return f"**{role.name}** is above my highest role, so I can't assign it. Move my role higher first."
         if interaction.user.id != guild.owner_id and role >= interaction.user.top_role:
             return f"**{role.name}** is equal to or above your highest role, so you can't make it pickable."
+        missing = permissions_beyond(guild, role, interaction.user)
+        if missing:
+            return (
+                f"**{role.name}** would give permissions you don't have ({short_list(missing)}), "
+                "so you can't make it pickable."
+            )
         return None
 
-    # --- admin commands: set up this server's roles ---
+    # --- setup commands (hidden behind Manage Roles by default) ---
 
-    @app_commands.command(name="roleadd", description="Add pickable roles — one or more: 🎮 @Gamer 🎨 @Artist (admin only)")
+    @app_commands.command(name="roleadd", description="Add pickable roles — one or more: 🎮 @Gamer 🎨 @Artist")
     @app_commands.describe(roles="Emoji then role, as many pairs as you like, e.g. 🎮 @Gamer 🎨 @Artist")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def roleadd(self, interaction: discord.Interaction, roles: str):
         pairs, problems = parse_role_pairs(roles, interaction.guild)
         settings = self._get_guild(interaction.guild)
@@ -177,10 +191,10 @@ class Roles(commands.Cog):
         lines = ["Added: " + ", ".join(added)] + problems + [await self._refresh_note(interaction.guild)]
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
-    @app_commands.command(name="roleremove", description="Stop offering a role in the picker (admin only)")
+    @app_commands.command(name="roleremove", description="Stop offering a role in the picker")
     @app_commands.describe(emoji="The emoji of the role to remove")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def roleremove(self, interaction: discord.Interaction, emoji: str):
         settings = self._get_guild(interaction.guild)
         key = normalize_emoji(emoji)
@@ -243,7 +257,7 @@ class Roles(commands.Cog):
     async def rolelist(self, interaction: discord.Interaction):
         lines = self._picker_lines(interaction.guild)
         if not lines:
-            await interaction.response.send_message("No pickable roles yet — an admin can add some with `/roleadd`.", ephemeral=True)
+            await interaction.response.send_message("No pickable roles yet — whoever manages roles here can add some with `/roleadd`.", ephemeral=True)
             return
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
@@ -256,9 +270,9 @@ class Roles(commands.Cog):
                 lines.append(f"{emoji} — {role.name}")
         return lines
 
-    @app_commands.command(name="rolesetup", description="Post the role picker in this channel — replaces the old one (admin only)")
+    @app_commands.command(name="rolesetup", description="Post the role picker in this channel — replaces the old one")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def rolesetup(self, interaction: discord.Interaction):
         lines = self._picker_lines(interaction.guild)
         if not lines:

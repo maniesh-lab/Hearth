@@ -23,7 +23,7 @@ into another bot. Light enough (~100 MB of RAM) to run on small free hosts.
 - **Saved warnings and a mod log** — warnings survive restarts (`/warnings`, `/clearwarnings`), and every kick, ban, mute and warning can be recorded in a log channel
 - **Deadline board** — `/deadline add "Maths assignment" 2026-10-25`, and the bot reminds the channel a day before; everyone sees the list with `/deadlines`, soonest first; survives restarts
 - **Respect points** — saying thanks to someone (@mention or reply) gives them +1; each +1 gets a short note in chat, points add up to six levels (Newbie → Legend), level-ups are announced, `/leaderboard` shows the top 10, and optional level roles show each member's level in the member list
-- **AI-powered FAQ** — an admin uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers come only from that server's own content
+- **AI-powered FAQ** — a server admin (or anyone they allow) uploads a `.txt`/`.md` knowledge base with `/faqload`, and members ask questions in plain English with `/ask`; answers come only from that server's own content
 - **Utility** — server info, quick polls, personal reminders
 - **Per-server isolation** — every server has its own settings, roles, FAQ, warnings, deadlines and respect points
 - **Restart-safe** — everything above (except `/remind`) is saved to disk
@@ -40,7 +40,7 @@ Hearth/
 │   ├── onboarding.py         # welcome DM, public welcome, auto-role, /welcome settings
 │   ├── roles.py              # per-server role setup, self-updating reaction picker + /role
 │   ├── moderation.py         # kick/ban/mute/warn, saved warnings, mod log, spam filter
-│   ├── deadlines.py          # /deadlines list, /deadline add + remove, reminder loop
+│   ├── deadlines.py          # /deadlines list, /deadline add + remove + ping, reminder loop
 │   ├── respect.py            # thank-you points, levels, leaderboard, level roles
 │   ├── utility.py            # serverinfo, poll, remind
 │   └── faq.py                # /faqload + /ask — the RAG pipeline
@@ -52,6 +52,7 @@ Hearth/
 │
 ├── main.py                   # bot entrypoint, intents, cog loader, error handler
 ├── storage.py                # the SQLite database shared by the cogs
+├── guards.py                 # shared "can't do more than yourself" checks for delegated commands
 ├── Dockerfile
 ├── .dockerignore
 ├── .env.example
@@ -131,15 +132,56 @@ pytest
 
 ---
 ## Setting It Up in Your Server
-Admin commands need **Manage Server** (welcome, mod log), **Manage Roles**
-(roles, level roles), **Manage Messages** (adding and removing deadlines) or
-**Moderate Members** (warnings); Discord hides them from everyone else. Any of
-them can be opened to other roles or people in **Server Settings → Integrations → Hearth**.
+
+### Who can use which command
+Member commands (`/ask`, `/deadlines`, `/respect`, `/leaderboard`, `/role`,
+`/rolelist`, `/serverinfo`, `/poll`, `/remind`) are open to everyone.
+
+Admin commands start **hidden** from anyone who doesn't have the matching
+permission:
+
+| Commands | Shown by default to people with |
+|---|---|
+| `/welcome`, `/modlog`, `/faqload` | Manage Server |
+| `/roleadd`, `/roleremove`, `/rolesetup`, `/levelroles` | Manage Roles |
+| `/deadline add` · `remove` · `ping` | Manage Messages |
+| `/mute`, `/warn`, `/warnings`, `/clearwarnings` | Moderate Members (called Timeout Members in Discord) |
+| `/kick` | Kick Members |
+| `/ban` | Ban Members |
+
+**Each server decides who else can use them.** In **Server Settings →
+Integrations → Hearth**, pick a command and allow a role or a person. They can
+then use it without that permission. For example:
+- a **CR** role gets `/deadline`, so class reps can add, remove and set the ping for deadlines
+- a **Role Manager** role gets `/roleadd`, `/roleremove` and `/rolesetup`, without Manage Roles
+- a **Mods** role gets `/warn`, `/warnings` and `/mute`, without Moderate Members
+
+A few things Discord decides:
+- Changing these settings needs **Manage Server and Manage Roles** (Administrator
+  covers both), and you can only change a command you can use yourself.
+- Allow the role on **each command**, not just on Hearth as a whole: an
+  app-wide setting doesn't get past a command's default permission.
+- A command's subcommands (like `/deadline add`, `remove` and `ping`) are
+  allowed together, as one entry.
+
+**`/kick` and `/ban` are the exception:** Hearth kicks and bans with its own
+permission, so it also checks that the person really has Kick Members or Ban
+Members. Allowing a role on them in Integrations isn't enough. Give the role
+the real permission instead.
+
+Hearth acts with its own permissions, so it makes sure nobody can use it to do
+more than they could themselves. These rules always apply, whoever runs the
+command:
+- nobody can moderate (or clear the warnings of) themselves, the server owner, or anyone whose role is equal to or above their own (the owner can); kick, ban, mute and warn also need Hearth's role to be above the member's
+- `/roleadd` and `/welcome role` refuse a role above the person's own highest role, or one that would give them permissions they don't have — server-wide or in any channel (the owner and Administrators skip this permission check; only the owner skips the rank check)
+- `/deadline add … ping:` and `/deadline ping` only accept a role the person could @mention themselves (in that deadline's channel for `add`, anywhere in the server for `ping`)
+- `/welcome channel` and `/deadline add` (the reminder's channel) only accept a channel the person can post in, and `/modlog set` one they can see
+- Hearth never pings @everyone, @here or a role unless it's a deadline reminder's chosen ping role, so text someone types (a `/remind` message, a reason) can't ping everyone
 
 **Welcome**
 - `/welcome channel #general` — where the public welcome goes (default: the server's system channel)
 - `/welcome message Hey {user}, welcome to {server}! You're member #{count}.` — `{user}`, `{server}` and `{count}` are filled in
-- `/welcome role @Student` — given to everyone who joins (run it with no role to turn it off)
+- `/welcome role @Student` — given to everyone who joins (run it with no role to turn it off). Hearth refuses `@everyone`, bot-managed and Administrator roles, roles above Hearth's own or yours, and roles that would give permissions you don't have
 - `/welcome show` and `/welcome test` — check the setup, or preview it on yourself
 
 **Roles**
@@ -152,7 +194,12 @@ reactions), so there's nothing else to run. To change a role's emoji, just
 `/roleadd` it again with the new emoji and it moves. `/rolelist` shows the list.
 Running `/rolesetup` again posts a fresh picker and removes the old one.
 Hearth refuses roles it can't safely hand out: `@everyone`, bot-managed roles,
-Administrator roles, and roles above Hearth's own or the admin's own.
+Administrator roles, roles above Hearth's own or yours, and roles that would
+give permissions you don't have yourself, server-wide or in any channel
+(otherwise anyone allowed `/roleadd` could let every member pick up, say, Ban
+Members or access to a private staff channel). The refusal names the missing
+permissions. The owner and Administrators can add any role that isn't refused
+for the other reasons.
 
 **Mod log**
 - `/modlog set #mod-log` — records every kick, ban, mute, warning, auto-mute and cleared warnings there
@@ -163,17 +210,18 @@ Administrator roles, and roles above Hearth's own or the admin's own.
 - `/deadlines` — **everyone**: upcoming deadlines, soonest first
 - `/deadline add title:"Maths assignment" date:2026-10-25` — optionally `due_time:5:00 PM` (or `5pm`, `17:00`), `channel:#assignments` and `ping:@CSE-A`
 - `/deadline remove` — start typing and pick the deadline from the dropdown (or type its number)
-- `/deadline ping role:@Students` — the role pinged with every reminder (Manage Server); run it with no role to stop pinging
+- `/deadline ping role:@Students` — the role pinged with every reminder; run it with no role to stop pinging
 
 **Numbers are positions in the list.** The soonest deadline is always **#1**, the
 next is #2, and so on. When #1 passes, #2 becomes #1. Each server has its own list,
 so every server starts at #1. Picking from the `/deadline remove` dropdown removes
 exactly that deadline, even if the numbers moved in the meantime.
 
-**Who can add and remove.** `/deadline add` and `/deadline remove` start hidden
-from regular members (they need Manage Messages). To let a role (like "CR") or a
-specific person use them, go to **Server Settings → Integrations → Hearth →
-`/deadline`** and allow them there. `/deadlines` stays open to everyone.
+**Who can add, remove and set the ping.** `/deadline add`, `remove` and `ping`
+start hidden from regular members (they need Manage Messages). To let a role
+(like "CR") or a specific person use them, go to **Server Settings →
+Integrations → Hearth → `/deadline`** and allow them there; Discord allows all
+three together. `/deadlines` stays open to everyone.
 
 The reminder is posted in the deadline's channel a day before: **24 hours before**
 if a time was given, otherwise **9:00 the day before** (a date-only deadline counts
@@ -181,7 +229,7 @@ as due at the end of that day). Dates are read in `HEARTH_TIMEZONE`, and Discord
 shows every time in each member's own time zone. If the bot was offline when a
 reminder was due, it's sent as soon as the bot is back — unless the deadline
 itself has passed. Finished deadlines are cleaned up after a week; each server
-can have up to 50 upcoming.
+can have up to 50 upcoming (`/deadlines` shows the soonest 15).
 
 **The bot has to be able to post in that channel.** Slash-command replies work
 even in a private channel the bot isn't part of, but the reminder is a normal
@@ -196,10 +244,12 @@ channel set to "All Messages". To buzz everyone's phone, pick a role to ping:
 section). The ping only notifies if the role is **mentionable** (Server Settings →
 Roles → the role → "Allow anyone to @mention this role") or Hearth has **Mention
 @everyone, @here and All Roles** — that permission is also needed to ping
-`@everyone`. `/deadline ping` warns you if neither is true. In `/deadline add`,
-someone can only pick a role they could ping themselves.
+`@everyone`. `/deadline ping` warns you if neither is true. In both `/deadline add` and
+`/deadline ping`, someone can only pick a role they could ping themselves: a CR
+can set `@CSE-A` if it's mentionable, but not `@everyone` unless they have that
+permission.
 
-There's no ping role until an admin sets one, so a new server's reminders ping
+There's no ping role until someone sets one, so a new server's reminders ping
 nobody. A role picked with `ping:` stays with that deadline for good. Deadlines
 added without one use whatever the default is **when the reminder is sent**, so
 changing `/deadline ping` also changes who they ping.
@@ -231,7 +281,8 @@ with a line for each. Points add up to these levels:
 
 `/respect` shows anyone's points, level and rank; `/leaderboard` shows the top 10.
 
-**Level roles (optional).** An admin with Manage Roles runs `/levelroles on`, and
+**Level roles (optional).** Someone with Manage Roles (or a role allowed in
+Integrations) runs `/levelroles on`, and
 Hearth creates one role per level, like `Helper (25+ respect)`, and gives every
 member the role for their current level. From then on:
 
@@ -252,7 +303,7 @@ member the role for their current level. From then on:
 
 ---
 ## How It Works — The FAQ System
-1. **Loading** — an admin runs `/faqload` and attaches a `.txt`/`.md` file (up to 1 MB); the content is split into ~200-word chunks
+1. **Loading** — a server admin (or anyone they allow) runs `/faqload` and attaches a `.txt`/`.md` file (up to 1 MB); the content is split into ~200-word chunks
 2. **Embedding** — each chunk is turned into a 768-number vector by Google's Gemini embeddings API (`gemini-embedding-001`) — no AI model runs inside the bot, which keeps it small
 3. **Storage** — chunks and vectors are saved to a small JSON file per server (`data/faq/{guild_id}.json`), so different servers' content never mixes
 4. **Retrieval** — `/ask` embeds the question the same way, and a plain cosine-similarity check (no vector database needed at this scale) finds the 3 closest chunks
@@ -263,23 +314,28 @@ member the role for their current level. From then on:
 | Command | Description |
 |---|---|
 | `/ping` | Health check |
-| `/welcome channel` · `message` · `role` · `show` · `test` | Set up how new members are welcomed (admin) |
-| `/roleadd` · `/roleremove` · `/rolelist` · `/rolesetup` | Set up the pickable roles (admin) |
+| `/welcome channel` · `message` · `role` · `show` · `test` | Set up how new members are welcomed (admin\*) |
+| `/roleadd` · `/roleremove` · `/rolesetup` | Set up the pickable roles and post the picker (admin\*) |
+| `/rolelist` | Show the roles members can pick |
 | `/role` | Toggle one of the pickable roles on/off for yourself |
-| `/kick`, `/ban`, `/mute`, `/warn` | Moderation actions (permission-gated) |
-| `/warnings` · `/clearwarnings` | See or clear a member's saved warnings (moderators) |
-| `/modlog set` · `off` | Record moderation actions in a channel (admin) |
+| `/mute`, `/warn` | Moderation actions (admin\*) |
+| `/kick`, `/ban` | Moderation actions (needs Kick / Ban Members) |
+| `/warnings` · `/clearwarnings` | See or clear a member's saved warnings (admin\*) |
+| `/modlog set` · `off` | Record moderation actions in a channel (admin\*) |
 | `/deadlines` | Upcoming deadlines, soonest first (everyone) |
-| `/deadline add` · `remove` | Add or remove deadlines; reminded a day before (roles an admin allows) |
-| `/deadline ping` | Role pinged with every deadline reminder, or none (admin) |
+| `/deadline add` · `remove` | Add or remove deadlines; reminded a day before (admin\*) |
+| `/deadline ping` | Role pinged with every deadline reminder, or none (admin\*) |
 | `/respect` | Show someone's respect points, level and rank |
 | `/leaderboard` | Top 10 most respected members in this server |
-| `/levelroles on` · `off` | Give members a role for their respect level (admin) |
-| `/faqload` | Load a server's FAQ knowledge base from a file (admin) |
+| `/levelroles on` · `off` | Give members a role for their respect level (admin\*) |
+| `/faqload` | Load a server's FAQ knowledge base from a file (admin\*) |
 | `/ask` | Ask a question, answered from that server's FAQ |
 | `/serverinfo` | Show server stats |
 | `/poll` | Post a quick 👍/👎 poll |
 | `/remind` | Get DM'd a reminder after N minutes (up to one week) |
+
+\*Hidden from members by default; each server can allow any role or person in
+Server Settings → Integrations → Hearth (see [Who can use which command](#who-can-use-which-command)).
 
 ---
 ## Tech Stack

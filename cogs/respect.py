@@ -406,10 +406,10 @@ class Respect(commands.Cog):
         default_permissions=discord.Permissions(manage_roles=True),
     )
 
-    async def _check_roles_admin(self, interaction):
-        if not interaction.user.guild_permissions.manage_roles:
-            await interaction.response.send_message("You need Manage Roles to change this.", ephemeral=True)
-            return False
+    async def _check_bot_can_manage_roles(self, interaction):
+        # Who may run /levelroles is set in Server Settings → Integrations
+        # (hidden behind Manage Roles by default); only Hearth's own
+        # permission is checked here.
         if not interaction.guild.me.guild_permissions.manage_roles:
             await interaction.response.send_message("I need the Manage Roles permission first.", ephemeral=True)
             return False
@@ -417,7 +417,7 @@ class Respect(commands.Cog):
 
     @levelroles.command(name="on", description="Create the level roles and give everyone their current one")
     async def level_roles_on(self, interaction: discord.Interaction):
-        if not await self._check_roles_admin(interaction):
+        if not await self._check_bot_can_manage_roles(interaction):
             return
         guild = interaction.guild
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -476,7 +476,7 @@ class Respect(commands.Cog):
 
     @levelroles.command(name="off", description="Stop giving level roles and delete them (points are kept)")
     async def level_roles_off(self, interaction: discord.Interaction):
-        if not await self._check_roles_admin(interaction):
+        if not await self._check_bot_can_manage_roles(interaction):
             return
         guild = interaction.guild
         await interaction.response.defer(ephemeral=True, thinking=True)

@@ -3,6 +3,12 @@ Moderation: kick, ban, mute (timeout), warn, an automatic spam filter,
 saved warnings (/warnings, /clearwarnings) and an optional mod-log channel
 (/modlog set) where every action is recorded.
 
+Who can use the commands: each one starts hidden from members who lack the
+matching permission (default_permissions), and each server can let any
+role or person use it in Server Settings → Integrations → Hearth. Only /kick
+and /ban also check the permission here in the code, so a slip in Server
+Settings can't let someone throw members out without Kick/Ban Members.
+
 Warnings and the mod-log setting live in data/hearth.db, so they survive
 restarts. The spam counter stays in memory on purpose: it only looks at the
 last few seconds of messages.
@@ -28,13 +34,16 @@ MODLOG_KEY = "modlog_channel"
 message_log = defaultdict(lambda: deque(maxlen=SPAM_MESSAGE_LIMIT))
 
 
-def moderation_problem(interaction: discord.Interaction, member: discord.Member):
+def moderation_problem(interaction: discord.Interaction, member: discord.Member, bot_acts=True):
     """Return why the person running the command can't act on `member`,
     or None if they can.
 
-    Discord's permission check only asks "can this person kick at all?".
-    It doesn't stop a moderator from kicking someone ranked above them, as
-    long as the bot itself ranks higher — so that check happens here.
+    Used by /kick, /ban, /mute, /warn and /clearwarnings. Discord only decides
+    whether someone may run the command at all; it doesn't stop a moderator
+    from acting on someone ranked above them, as long as the bot itself ranks
+    higher — so that check happens here, whoever the server allowed to run the
+    command. bot_acts=False skips the bot's own rank, for actions that only
+    touch Hearth's records (clearing warnings).
     """
     guild = interaction.guild
     if member.id == interaction.user.id:
@@ -45,7 +54,7 @@ def moderation_problem(interaction: discord.Interaction, member: discord.Member)
         return "The server owner can't be moderated."
     if interaction.user.id != guild.owner_id and member.top_role >= interaction.user.top_role:
         return f"**{member}** has a role equal to or higher than yours."
-    if member.top_role >= guild.me.top_role:
+    if bot_acts and member.top_role >= guild.me.top_role:
         return f"**{member}** has a role equal to or higher than mine — move my role above theirs first."
     return None
 
@@ -90,17 +99,16 @@ class Moderation(commands.Cog):
 
     @modlog.command(name="set", description="Record kicks, bans, mutes and warnings in a channel")
     async def modlog_set(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("You need Manage Server to change this.", ephemeral=True)
+        if not channel.permissions_for(interaction.user).view_channel:
+            await interaction.response.send_message(
+                f"You can't see {channel.mention} yourself, so you can't send the mod log there.", ephemeral=True
+            )
             return
         storage.set_setting(self.db, interaction.guild.id, MODLOG_KEY, channel.id)
         await interaction.response.send_message(f"Moderation actions will be recorded in {channel.mention}.", ephemeral=True)
 
     @modlog.command(name="off", description="Stop recording moderation actions")
     async def modlog_off(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("You need Manage Server to change this.", ephemeral=True)
-            return
         storage.delete_setting(self.db, interaction.guild.id, MODLOG_KEY)
         await interaction.response.send_message("Mod log turned off.", ephemeral=True)
 
@@ -108,6 +116,9 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="kick", description="Kick a member")
     @app_commands.guild_only()
+    @app_commands.default_permissions(kick_members=True)
+    # Kept even if the server allows a role in Integrations: kicking is done
+    # with Hearth's own permission, so the person must really have it.
     @app_commands.checks.has_permissions(kick_members=True)
     async def kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
         if await self._refuse_if_needed(interaction, member):
@@ -118,6 +129,8 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="ban", description="Ban a member")
     @app_commands.guild_only()
+    @app_commands.default_permissions(ban_members=True)
+    # Kept for the same reason as /kick.
     @app_commands.checks.has_permissions(ban_members=True)
     async def ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
         if await self._refuse_if_needed(interaction, member):
@@ -128,7 +141,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="mute", description="Timeout a member for a number of minutes (max 28 days)")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def mute(
         self,
         interaction: discord.Interaction,
@@ -145,7 +158,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="warn", description="Warn a member (saved, see /warnings)")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def warn(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason given"):
         if await self._refuse_if_needed(interaction, member):
             return
@@ -170,7 +183,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="warnings", description="Show a member's warnings")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def warnings(self, interaction: discord.Interaction, member: discord.Member):
         rows = self.db.execute(
             "SELECT moderator_id, reason, created_at FROM warnings WHERE guild_id = ? AND user_id = ? "
@@ -191,8 +204,15 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="clearwarnings", description="Delete all of a member's warnings")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def clearwarnings(self, interaction: discord.Interaction, member: discord.Member):
+        # Same rank rules as warning someone: nobody can clear their own
+        # warnings or those of someone ranked at or above them. Hearth's own
+        # rank doesn't matter, since this only deletes its records.
+        problem = moderation_problem(interaction, member, bot_acts=False)
+        if problem:
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
         cursor = self.db.execute(
             "DELETE FROM warnings WHERE guild_id = ? AND user_id = ?", (interaction.guild.id, member.id)
         )

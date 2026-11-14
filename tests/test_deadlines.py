@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
+import discord
 import pytest
 
 import storage
@@ -140,9 +141,10 @@ def test_reminder_sent_once_when_its_time_comes(cog):
 
 
 def test_add_is_refused_where_the_bot_cant_post(cog):
-    cog.channel.permissions_for = MagicMock(return_value=MagicMock(view_channel=True, send_messages=False))
+    # The person can post there, but Hearth can't.
+    cog.channel.permissions_for = lambda who: MagicMock(view_channel=True, send_messages=who.id != 555)
     interaction = add(cog, make_member(1), "Private", "2099-06-10")
-    assert "can't post in #assignments" in reply_text(interaction)
+    assert "I can't post in #assignments" in reply_text(interaction)
     assert cog.upcoming(1) == []
 
 
@@ -207,9 +209,9 @@ def test_a_deadline_from_another_server_cant_be_removed(cog):
     assert "couldn't find" in remove(cog, f"id:{club_id}")  # remove() runs in server 1
 
 
-def test_who_can_add_and_remove_is_up_to_the_admin(cog):
-    # /deadline add|remove start hidden behind Manage Messages; the admin can
-    # allow roles in Server Settings. /deadlines has no such limit.
+def test_deadline_commands_start_hidden_and_the_list_is_open(cog):
+    # /deadline add|remove|ping start hidden behind Manage Messages (the server can
+    # allow roles in Integrations); /deadlines is open to everyone.
     assert cog.deadline.default_permissions.manage_messages is True
     assert cog.list_deadlines.default_permissions is None
 
@@ -294,9 +296,9 @@ def test_cant_pick_a_role_you_couldnt_ping_yourself(cog):
     assert cog.upcoming(1) == []
 
 
-def set_ping(cog, role, manage_guild=True, bot_can_mention=True):
+def set_ping(cog, role, user_can_mention=True, bot_can_mention=True):
     user = make_member(1)
-    user.guild_permissions.manage_guild = manage_guild
+    user.guild_permissions = discord.Permissions(mention_everyone=user_can_mention)
     guild = make_guild()
     guild.me.guild_permissions.mention_everyone = bot_can_mention
     interaction = make_interaction(user, guild)
@@ -304,9 +306,23 @@ def set_ping(cog, role, manage_guild=True, bot_can_mention=True):
     return reply_text(interaction)
 
 
-def test_setting_the_ping_role_needs_manage_server(cog):
-    assert "Manage Server" in set_ping(cog, make_role(77), manage_guild=False)
+def test_anyone_allowed_on_deadline_can_set_a_role_they_could_ping(cog):
+    # No Manage Server check any more: whoever the admin allows on /deadline can
+    # set the default, as long as they could ping that role themselves.
+    assert set_ping(cog, make_role(77, mentionable=True), user_can_mention=False) == "Reminders will ping <@&77>."
+    assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) == "77"
+
+
+@pytest.mark.parametrize("role", [make_role(77, mentionable=False), make_role(1, everyone=True)])
+def test_cant_set_a_default_you_couldnt_ping_yourself(cog, role):
+    reply = set_ping(cog, role, user_can_mention=False)
+    assert reply.startswith("You can't ping")
+    assert "@@" not in reply
     assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) is None
+
+
+def test_mention_everyone_lets_you_set_any_default(cog):
+    assert set_ping(cog, make_role(77, mentionable=False)) == "Reminders will ping <@&77>."
 
 
 def test_set_and_clear_the_ping_role(cog):
@@ -332,3 +348,23 @@ def test_old_databases_get_the_ping_column(tmp_path):
     old.close()
     columns = {r["name"] for r in storage.connect(path).execute("PRAGMA table_info(deadlines)")}
     assert "ping_role_id" in columns
+
+
+def test_cant_add_a_deadline_for_the_current_channel_if_you_cant_post_in_it(cog):
+    cog.channel.permissions_for = lambda who: MagicMock(view_channel=True, send_messages=who.id == 555)
+    interaction = add(cog, make_member(1), "Quiz", "2099-06-10")
+    assert "can't post in #assignments yourself" in reply_text(interaction)
+    assert cog.upcoming(1) == []
+
+
+def test_cant_send_reminders_to_a_channel_you_cant_post_in(cog):
+    announcements = MagicMock()
+    announcements.mention = "#announcements"
+    announcements.permissions_for = lambda who: MagicMock(
+        view_channel=True, send_messages=who.id == 555  # only Hearth (id 555) may post
+    )
+    interaction = make_interaction(make_member(1), make_guild())
+    interaction.channel = cog.channel
+    asyncio.run(cog.add.callback(cog, interaction, "Quiz", "2099-06-10", None, announcements))
+    assert "can't post in #announcements yourself" in reply_text(interaction)
+    assert cog.upcoming(1) == []

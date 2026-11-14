@@ -34,7 +34,15 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
-bot = Hearth(command_prefix="!", intents=intents)
+# By default no message may ping @everyone, @here or a role — only users.
+# Deadline reminders pass their own allowed_mentions for the role they ping.
+# Without this, text typed by a member (a /remind message, a reason) could
+# make Hearth ping everyone.
+bot = Hearth(
+    command_prefix="!",
+    intents=intents,
+    allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
+)
 
 
 @bot.event
