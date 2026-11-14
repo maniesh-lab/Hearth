@@ -145,7 +145,7 @@ permission:
 | `/welcome`, `/modlog`, `/faqload` | Manage Server |
 | `/roleadd`, `/roleremove`, `/rolesetup`, `/levelroles` | Manage Roles |
 | `/deadline add` · `remove` · `ping` | Manage Messages |
-| `/mute`, `/warn`, `/warnings`, `/clearwarnings` | Moderate Members |
+| `/mute`, `/warn`, `/warnings`, `/clearwarnings` | Moderate Members (called Timeout Members in Discord) |
 | `/kick` | Kick Members |
 | `/ban` | Ban Members |
 
@@ -172,10 +172,10 @@ the real permission instead.
 Hearth acts with its own permissions, so it makes sure nobody can use it to do
 more than they could themselves. These rules always apply, whoever runs the
 command:
-- nobody can moderate (or clear the warnings of) themselves, the server owner, or anyone whose role is equal to or above their own (the owner can) or above Hearth's
-- `/roleadd` and `/welcome role` refuse a role above the person's own highest role, or one that would give them permissions they don't have — server-wide or in any channel (the owner and Administrators can add any role that's otherwise safe)
+- nobody can moderate (or clear the warnings of) themselves, the server owner, or anyone whose role is equal to or above their own (the owner can); kick, ban, mute and warn also need Hearth's role to be above the member's
+- `/roleadd` and `/welcome role` refuse a role above the person's own highest role, or one that would give them permissions they don't have — server-wide or in any channel (the owner and Administrators skip this permission check; only the owner skips the rank check)
 - `/deadline add … ping:` and `/deadline ping` only accept a role the person could @mention themselves (in that deadline's channel for `add`, anywhere in the server for `ping`)
-- `/welcome channel` and `/deadline add … channel:` only accept a channel the person can post in, and `/modlog set` one they can see
+- `/welcome channel` and `/deadline add` (the reminder's channel) only accept a channel the person can post in, and `/modlog set` one they can see
 - Hearth never pings @everyone, @here or a role unless it's a deadline reminder's chosen ping role, so text someone types (a `/remind` message, a reason) can't ping everyone
 
 **Welcome**

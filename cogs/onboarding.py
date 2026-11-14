@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import storage
-from guards import can_post_in, permissions_beyond
+from guards import can_post_in, permissions_beyond, short_list
 
 DEFAULT_MESSAGE = "Welcome, {user} — glad to have you here."
 MAX_MESSAGE = 500
@@ -52,7 +52,7 @@ def auto_role_problem(guild, role, member):
     missing = permissions_beyond(guild, role, member)
     if missing:
         return (
-            f"**{role.name}** would give permissions you don't have ({', '.join(missing)}), "
+            f"**{role.name}** would give permissions you don't have ({short_list(missing)}), "
             "so you can't give it to everyone who joins."
         )
     return None

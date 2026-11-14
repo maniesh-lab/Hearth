@@ -34,7 +34,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from guards import permissions_beyond
+from guards import permissions_beyond, short_list
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONFIG_PATH = DATA_DIR / "roles.json"
@@ -151,7 +151,7 @@ class Roles(commands.Cog):
         missing = permissions_beyond(guild, role, interaction.user)
         if missing:
             return (
-                f"**{role.name}** would give permissions you don't have ({', '.join(missing)}), "
+                f"**{role.name}** would give permissions you don't have ({short_list(missing)}), "
                 "so you can't make it pickable."
             )
         return None

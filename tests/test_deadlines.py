@@ -141,9 +141,10 @@ def test_reminder_sent_once_when_its_time_comes(cog):
 
 
 def test_add_is_refused_where_the_bot_cant_post(cog):
-    cog.channel.permissions_for = MagicMock(return_value=MagicMock(view_channel=True, send_messages=False))
+    # The person can post there, but Hearth can't.
+    cog.channel.permissions_for = lambda who: MagicMock(view_channel=True, send_messages=who.id != 555)
     interaction = add(cog, make_member(1), "Private", "2099-06-10")
-    assert "can't post in #assignments" in reply_text(interaction)
+    assert "I can't post in #assignments" in reply_text(interaction)
     assert cog.upcoming(1) == []
 
 
@@ -347,6 +348,13 @@ def test_old_databases_get_the_ping_column(tmp_path):
     old.close()
     columns = {r["name"] for r in storage.connect(path).execute("PRAGMA table_info(deadlines)")}
     assert "ping_role_id" in columns
+
+
+def test_cant_add_a_deadline_for_the_current_channel_if_you_cant_post_in_it(cog):
+    cog.channel.permissions_for = lambda who: MagicMock(view_channel=True, send_messages=who.id == 555)
+    interaction = add(cog, make_member(1), "Quiz", "2099-06-10")
+    assert "can't post in #assignments yourself" in reply_text(interaction)
+    assert cog.upcoming(1) == []
 
 
 def test_cant_send_reminders_to_a_channel_you_cant_post_in(cog):

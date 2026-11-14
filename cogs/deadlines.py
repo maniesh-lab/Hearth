@@ -286,6 +286,13 @@ class Deadlines(commands.Cog):
             return
 
         target = channel or interaction.channel
+        # Nobody can have Hearth post into a channel they can't post in themselves.
+        if not can_post_in(target, interaction.user):
+            await interaction.response.send_message(
+                f"You can't post in {target.mention} yourself, so you can't send reminders there.", ephemeral=True
+            )
+            return
+
         # Slash-command replies work even where the bot can't post, so check now
         # rather than let the reminder fail silently a day before.
         perms = target.permissions_for(interaction.guild.me)
@@ -295,13 +302,6 @@ class Deadlines(commands.Cog):
                 "(Edit Channel → Permissions → add Hearth with View Channel and Send Messages), "
                 "or pick another channel with `channel:`.",
                 ephemeral=True,
-            )
-            return
-
-        # Nor can someone have Hearth post into a channel they can't post in themselves.
-        if channel is not None and not can_post_in(channel, interaction.user):
-            await interaction.response.send_message(
-                f"You can't post in {channel.mention} yourself, so you can't send reminders there.", ephemeral=True
             )
             return
 

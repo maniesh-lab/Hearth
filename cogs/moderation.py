@@ -34,14 +34,16 @@ MODLOG_KEY = "modlog_channel"
 message_log = defaultdict(lambda: deque(maxlen=SPAM_MESSAGE_LIMIT))
 
 
-def moderation_problem(interaction: discord.Interaction, member: discord.Member):
+def moderation_problem(interaction: discord.Interaction, member: discord.Member, bot_acts=True):
     """Return why the person running the command can't act on `member`,
     or None if they can.
 
-    Used by /kick, /ban, /mute, /warn and /clearwarnings. Discord only decides whether someone
-    may run the command at all; it doesn't stop a moderator from acting on
-    someone ranked above them, as long as the bot itself ranks higher — so
-    that check happens here, whoever the server allowed to run the command.
+    Used by /kick, /ban, /mute, /warn and /clearwarnings. Discord only decides
+    whether someone may run the command at all; it doesn't stop a moderator
+    from acting on someone ranked above them, as long as the bot itself ranks
+    higher — so that check happens here, whoever the server allowed to run the
+    command. bot_acts=False skips the bot's own rank, for actions that only
+    touch Hearth's records (clearing warnings).
     """
     guild = interaction.guild
     if member.id == interaction.user.id:
@@ -52,7 +54,7 @@ def moderation_problem(interaction: discord.Interaction, member: discord.Member)
         return "The server owner can't be moderated."
     if interaction.user.id != guild.owner_id and member.top_role >= interaction.user.top_role:
         return f"**{member}** has a role equal to or higher than yours."
-    if member.top_role >= guild.me.top_role:
+    if bot_acts and member.top_role >= guild.me.top_role:
         return f"**{member}** has a role equal to or higher than mine — move my role above theirs first."
     return None
 
@@ -205,8 +207,11 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(moderate_members=True)
     async def clearwarnings(self, interaction: discord.Interaction, member: discord.Member):
         # Same rank rules as warning someone: nobody can clear their own
-        # warnings or those of someone ranked at or above them.
-        if await self._refuse_if_needed(interaction, member):
+        # warnings or those of someone ranked at or above them. Hearth's own
+        # rank doesn't matter, since this only deletes its records.
+        problem = moderation_problem(interaction, member, bot_acts=False)
+        if problem:
+            await interaction.response.send_message(problem, ephemeral=True)
             return
         cursor = self.db.execute(
             "DELETE FROM warnings WHERE guild_id = ? AND user_id = ?", (interaction.guild.id, member.id)
