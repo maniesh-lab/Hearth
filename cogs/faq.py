@@ -112,9 +112,11 @@ class FAQ(commands.Cog):
             else:
                 print("[faq] GROQ_API_KEY is not set — /ask will be unavailable.")
 
-    @app_commands.command(name="faqload", description="Load this server's FAQ knowledge base (admin only)")
+    # Hidden from members without Manage Server until an admin allows a role or
+    # person in Server Settings → Integrations → Hearth → /faqload.
+    @app_commands.command(name="faqload", description="Load this server's FAQ knowledge base")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
     async def faqload(self, interaction: discord.Interaction, file: discord.Attachment):
         if self.embedder is None:
             await interaction.response.send_message("The FAQ isn't available — the bot owner hasn't set a Gemini API key.", ephemeral=True)

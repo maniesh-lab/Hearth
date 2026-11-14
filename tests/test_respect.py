@@ -300,11 +300,21 @@ def test_turning_roles_off_deletes_them_and_keeps_points(cog):
     assert cog.store.points(1, 2) == 3
 
 
-def test_level_roles_need_manage_roles(cog):
+def test_who_can_run_level_roles_is_up_to_the_admin(cog):
+    # Hidden behind Manage Roles by default; anyone the admin allows in Server
+    # Settings → Integrations can run it, without Manage Roles themselves.
+    assert cog.levelroles.default_permissions.manage_roles is True
     guild, made = role_guild()
     user = role_member(1)
     user.guild_permissions.manage_roles = False
-    interaction = make_interaction(user, guild)
+    asyncio.run(cog.level_roles_on.callback(cog, make_interaction(user, guild)))
+    assert guild.create_role.await_count == 6
+
+
+def test_level_roles_need_hearth_to_have_manage_roles(cog):
+    guild, made = role_guild()
+    guild.me.guild_permissions.manage_roles = False
+    interaction = make_interaction(role_member(1), guild)
     asyncio.run(cog.level_roles_on.callback(cog, interaction))
-    assert "Manage Roles" in reply_text(interaction)
+    assert "I need the Manage Roles permission" in reply_text(interaction)
     guild.create_role.assert_not_awaited()

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
+import discord
 import pytest
 
 import storage
@@ -294,9 +295,9 @@ def test_cant_pick_a_role_you_couldnt_ping_yourself(cog):
     assert cog.upcoming(1) == []
 
 
-def set_ping(cog, role, manage_guild=True, bot_can_mention=True):
+def set_ping(cog, role, user_can_mention=True, bot_can_mention=True):
     user = make_member(1)
-    user.guild_permissions.manage_guild = manage_guild
+    user.guild_permissions = discord.Permissions(mention_everyone=user_can_mention)
     guild = make_guild()
     guild.me.guild_permissions.mention_everyone = bot_can_mention
     interaction = make_interaction(user, guild)
@@ -304,9 +305,23 @@ def set_ping(cog, role, manage_guild=True, bot_can_mention=True):
     return reply_text(interaction)
 
 
-def test_setting_the_ping_role_needs_manage_server(cog):
-    assert "Manage Server" in set_ping(cog, make_role(77), manage_guild=False)
+def test_anyone_allowed_on_deadline_can_set_a_role_they_could_ping(cog):
+    # No Manage Server check any more: whoever the admin allows on /deadline can
+    # set the default, as long as they could ping that role themselves.
+    assert set_ping(cog, make_role(77, mentionable=True), user_can_mention=False) == "Reminders will ping <@&77>."
+    assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) == "77"
+
+
+@pytest.mark.parametrize("role", [make_role(77, mentionable=False), make_role(1, everyone=True)])
+def test_cant_set_a_default_you_couldnt_ping_yourself(cog, role):
+    reply = set_ping(cog, role, user_can_mention=False)
+    assert reply.startswith("You can't ping")
+    assert "@@" not in reply
     assert storage.get_setting(cog.db, 1, deadlines.PING_KEY) is None
+
+
+def test_mention_everyone_lets_you_set_any_default(cog):
+    assert set_ping(cog, make_role(77, mentionable=False)) == "Reminders will ping <@&77>."
 
 
 def test_set_and_clear_the_ping_role(cog):

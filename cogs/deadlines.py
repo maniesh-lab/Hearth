@@ -3,16 +3,16 @@ Deadline board.
 - /deadlines — everyone: upcoming deadlines, soonest first, numbered #1, #2, #3…
 - /deadline add "Maths assignment" 2026-10-25 [time, e.g. 5pm or 17:00] [channel] [ping]
 - /deadline remove — pick the deadline from a dropdown (or type its number)
-- /deadline ping @Students — the role pinged with every reminder (Manage Server)
+- /deadline ping @Students — the role pinged with every reminder
 
 The numbers are positions in the list, worked out fresh each time: the soonest
 deadline is always #1, and when it passes the next one becomes #1. Each server
 has its own list, so every server starts at #1.
 
-/deadline add and /deadline remove are hidden from regular members by default
+/deadline add, remove and ping are hidden from regular members by default
 (they need Manage Messages). An admin can let a role or a person use them in
 Server Settings → Integrations → Hearth → /deadline, while /deadlines stays
-open to everyone.
+open to everyone. There are no other permission checks in the code.
 
 The bot posts a reminder in the deadline's channel a day before it's due:
 - with a time: 24 hours before
@@ -21,7 +21,9 @@ The bot posts a reminder in the deadline's channel a day before it's due:
 Reminders ping nobody unless a role is set: /deadline ping sets the server's
 default, and /deadline add ping:@Role overrides it for one deadline. Pinging a
 role that isn't mentionable (or @everyone) needs Mention @everyone, @here and
-All Roles — for Hearth to make it notify, and for whoever picks it in /deadline add.
+All Roles — for Hearth to make it notify, and for whoever picks it in
+/deadline add or /deadline ping (nobody can make Hearth ping a role they
+couldn't ping themselves).
 
 Dates and times are read in HEARTH_TIMEZONE (default Asia/Kathmandu). In
 Discord, the times are shown with <t:...> timestamps, so every member sees
@@ -327,12 +329,19 @@ class Deadlines(commands.Cog):
     @deadline.command(name="ping", description="Set the role pinged with every reminder; leave it empty to stop pinging")
     @app_commands.describe(role="Role to ping, e.g. @Students (leave empty to turn pinging off)")
     async def set_ping(self, interaction: discord.Interaction, role: discord.Role | None = None):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("You need Manage Server to change this.", ephemeral=True)
-            return
         if role is None:
             storage.delete_setting(self.db, interaction.guild.id, PING_KEY)
             await interaction.response.send_message("Reminders won't ping anyone now.", ephemeral=True)
+            return
+
+        # Same rule as ping: in /deadline add. The default is used in every
+        # reminder channel, so the server-wide permission is what counts.
+        if needs_mention_everyone(role) and not interaction.user.guild_permissions.mention_everyone:
+            await interaction.response.send_message(
+                f"You can't ping {ping_text(role)} — that needs the Mention @everyone, @here and All Roles permission.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
             return
 
         storage.set_setting(self.db, interaction.guild.id, PING_KEY, role.id)

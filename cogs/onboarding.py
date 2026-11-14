@@ -8,6 +8,9 @@ Each server sets its own with /welcome:
 - /welcome role @Student     — role given on join (leave empty to turn off)
 - /welcome show / test       — check the setup, or preview it on yourself
 
+/welcome starts hidden from members without Manage Server; admins can let any
+role or person use it in Server Settings → Integrations → Hearth → /welcome.
+
 Settings are saved in data/hearth.db.
 """
 
@@ -43,6 +46,10 @@ def auto_role_problem(guild, role, admin):
         return f"**{role.name}** is above my highest role, so I can't assign it. Move my role higher first."
     if admin.id != guild.owner_id and role >= admin.top_role:
         return f"**{role.name}** is equal to or above your highest role."
+    # /welcome can be handed to people without Manage Server or Manage Roles,
+    # so they mustn't give every newcomer powers they don't have themselves.
+    if admin.id != guild.owner_id and not role.permissions.is_subset(admin.guild_permissions):
+        return f"**{role.name}** has permissions you don't have, so you can't give it to everyone who joins."
     return None
 
 
@@ -114,32 +121,20 @@ class Onboarding(commands.Cog):
         default_permissions=discord.Permissions(manage_guild=True),
     )
 
-    async def _check_admin(self, interaction):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("You need Manage Server to change this.", ephemeral=True)
-            return False
-        return True
-
     @group.command(name="channel", description="Where the public welcome message is posted")
     async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        if not await self._check_admin(interaction):
-            return
         storage.set_setting(self.db, interaction.guild.id, "welcome_channel", channel.id)
         await interaction.response.send_message(f"New members will be welcomed in {channel.mention}.", ephemeral=True)
 
     @group.command(name="message", description="The welcome text — {user}, {server} and {count} are filled in")
     @app_commands.describe(text='e.g. "Hey {user}, welcome to {server}! Grab your roles in #roles."')
     async def set_message(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, MAX_MESSAGE]):
-        if not await self._check_admin(interaction):
-            return
         storage.set_setting(self.db, interaction.guild.id, "welcome_message", text)
         preview = render_welcome(text, interaction.user)
         await interaction.response.send_message(f"Welcome message saved. Preview:\n> {preview}", ephemeral=True)
 
     @group.command(name="role", description="Role given to everyone who joins (leave empty to turn off)")
     async def set_role(self, interaction: discord.Interaction, role: discord.Role | None = None):
-        if not await self._check_admin(interaction):
-            return
         if role is None:
             storage.delete_setting(self.db, interaction.guild.id, "welcome_role")
             await interaction.response.send_message("New members won't get a role automatically.", ephemeral=True)

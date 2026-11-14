@@ -18,6 +18,12 @@ Saved per server in data/roles.json:
       }
     }
 Role IDs are stored instead of names, so renaming a role doesn't break it.
+
+/roleadd, /roleremove and /rolesetup start hidden from members without Manage
+Roles. An admin can let any role or person use them in Server Settings →
+Integrations → Hearth, so someone can run the picker without Manage Roles —
+which is why a role they don't outrank, or one with permissions they don't
+have, can't be made pickable.
 """
 
 import json
@@ -140,14 +146,16 @@ class Roles(commands.Cog):
             return f"**{role.name}** is above my highest role, so I can't assign it. Move my role higher first."
         if interaction.user.id != guild.owner_id and role >= interaction.user.top_role:
             return f"**{role.name}** is equal to or above your highest role, so you can't make it pickable."
+        if interaction.user.id != guild.owner_id and not role.permissions.is_subset(interaction.user.guild_permissions):
+            return f"**{role.name}** has permissions you don't have, so you can't make it pickable."
         return None
 
     # --- admin commands: set up this server's roles ---
 
-    @app_commands.command(name="roleadd", description="Add pickable roles — one or more: 🎮 @Gamer 🎨 @Artist (admin only)")
+    @app_commands.command(name="roleadd", description="Add pickable roles — one or more: 🎮 @Gamer 🎨 @Artist")
     @app_commands.describe(roles="Emoji then role, as many pairs as you like, e.g. 🎮 @Gamer 🎨 @Artist")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def roleadd(self, interaction: discord.Interaction, roles: str):
         pairs, problems = parse_role_pairs(roles, interaction.guild)
         settings = self._get_guild(interaction.guild)
@@ -177,10 +185,10 @@ class Roles(commands.Cog):
         lines = ["Added: " + ", ".join(added)] + problems + [await self._refresh_note(interaction.guild)]
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
-    @app_commands.command(name="roleremove", description="Stop offering a role in the picker (admin only)")
+    @app_commands.command(name="roleremove", description="Stop offering a role in the picker")
     @app_commands.describe(emoji="The emoji of the role to remove")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def roleremove(self, interaction: discord.Interaction, emoji: str):
         settings = self._get_guild(interaction.guild)
         key = normalize_emoji(emoji)
@@ -256,9 +264,9 @@ class Roles(commands.Cog):
                 lines.append(f"{emoji} — {role.name}")
         return lines
 
-    @app_commands.command(name="rolesetup", description="Post the role picker in this channel — replaces the old one (admin only)")
+    @app_commands.command(name="rolesetup", description="Post the role picker in this channel — replaces the old one")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def rolesetup(self, interaction: discord.Interaction):
         lines = self._picker_lines(interaction.guild)
         if not lines:

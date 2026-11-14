@@ -9,12 +9,13 @@ from cogs.onboarding import Onboarding, auto_role_problem, render_welcome
 from conftest import Rank, make_guild, make_interaction, make_member, reply_text
 
 
-def role(role_id, rank, admin=False, managed=False, default=False):
+def role(role_id, rank, admin=False, managed=False, default=False, perms=None):
     r = MagicMock()
     r.id = role_id
     r.name = f"role{role_id}"
     r.position = rank
     r.managed = managed
+    r.permissions = perms or discord.Permissions.none()
     r.permissions.administrator = admin
     r.is_default = lambda: default
     r.__ge__ = lambda self, other: Rank(self.position) >= other
@@ -31,11 +32,25 @@ def test_render_fills_placeholders_and_ignores_other_braces():
 def test_auto_role_rules():
     guild = make_guild(owner_id=999, bot_rank=10)
     admin = make_member(2, rank=8)
+    admin.guild_permissions = discord.Permissions.all()
     assert auto_role_problem(guild, role(1, 3), admin) is None
     assert "Administrator" in auto_role_problem(guild, role(1, 3, admin=True), admin)
     assert "above my highest role" in auto_role_problem(guild, role(1, 11), admin)
     assert "above your highest role" in auto_role_problem(guild, role(1, 9), admin)
     assert "@everyone" in auto_role_problem(guild, role(1, 0, default=True), admin)
+
+
+def test_welcome_role_cant_carry_permissions_the_person_lacks():
+    # /welcome can be handed to people without Manage Server, so they mustn't
+    # give every newcomer powers they don't have themselves.
+    guild = make_guild(owner_id=999, bot_rank=10)
+    helper = make_member(2, rank=8)
+    helper.guild_permissions = discord.Permissions(send_messages=True)
+    assert auto_role_problem(guild, role(1, 3, perms=discord.Permissions(send_messages=True)), helper) is None
+    assert "permissions you don't have" in auto_role_problem(guild, role(1, 3, perms=discord.Permissions(ban_members=True)), helper)
+    owner = make_member(999, rank=9)
+    owner.guild_permissions = discord.Permissions.none()
+    assert auto_role_problem(guild, role(1, 3, perms=discord.Permissions(ban_members=True)), owner) is None
 
 
 @pytest.fixture
@@ -91,11 +106,14 @@ def test_join_still_welcomed_when_dms_are_closed(setup):
     guild.system_channel.send.assert_awaited_once()
 
 
-def test_settings_need_manage_server(setup):
+def test_who_can_change_settings_is_up_to_the_admin(setup):
+    # /welcome starts hidden behind Manage Server; an admin can allow any role
+    # in Server Settings → Integrations, and then the code doesn't block them.
     cog, guild, _, _ = setup
-    user = make_member(2)
-    user.guild_permissions.manage_guild = False
+    assert cog.group.default_permissions == discord.Permissions(manage_guild=True)
+    user = new_member(guild)
+    user.guild_permissions = discord.Permissions.none()
     interaction = make_interaction(user, guild)
     asyncio.run(cog.set_message.callback(cog, interaction, "hi"))
-    assert "Manage Server" in reply_text(interaction)
-    assert storage.get_setting(cog.db, guild.id, "welcome_message") is None
+    assert "Welcome message saved" in reply_text(interaction)
+    assert storage.get_setting(cog.db, guild.id, "welcome_message") == "hi"
